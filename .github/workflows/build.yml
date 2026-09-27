@@ -1,41 +1,38 @@
-# OpenWrt LuCI 应用 CI
-# 用途：每次 push / PR 时用官方 OpenWrt SDK 编译 luci-app-natmode 的 .ipk，
-#       并对两个 shell 脚本做 ShellCheck 静态检查。
-#
-# 约定：本仓库根目录即「包目录」（repo 名 luci-app-natmode，根下直接是 Makefile）。
-#       如果你的布局是把包放在某子目录（feed 风格），需自行调整 FEEDNAME / PACKAGES
-#       或在 checkout 后把子目录软链到仓库根。
-#
-# 产物：每个矩阵项产出一个 ipk，作为 GitHub Actions Artifact 上传，可直接下载安装。
-
-name: Build & Lint
+name: "Build & Lint"
 
 on:
   push:
-分支: [ master, main ]
+分支:
+      - master
+      - main
     paths-ignore:
       - '**.md'
       - 'LICENSE'
   pull_request:
-分支: [ master, main ]
+分支:
+      - master
+      - main
   workflow_dispatch:
 
-# 仅读取仓库内容，无写权限
 permissions:
   contents: read
 
 jobs:
   build:
-    name: Build ${{ matrix.arch }}-${{ matrix.branch }}
+    name: "Build ${{ matrix.arch }}-${{ matrix.branch }}"
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { arch: x86_64,             branch: SNAPSHOT }
-          - { arch: mipsel_24kc,        branch: SNAPSHOT }   # MT7621 等
-          - { arch: aarch64_cortex-a53, branch: SNAPSHOT }   # IPQ807x / 多数 ARM 路由
-          - { arch: x86_64,             branch: openwrt-23.05 }
+          - arch: x86_64
+            branch: SNAPSHOT
+          - arch: mipsel_24kc
+            branch: SNAPSHOT
+          - arch: aarch64_cortex-a53
+            branch: SNAPSHOT
+          - arch: x86_64
+            branch: openwrt-23.05
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -51,12 +48,12 @@ jobs:
       - name: Upload ipk artifact
         uses: actions/upload-artifact@v4
         with:
-          name: luci-app-natmode_${{ matrix.arch }}_${{ matrix.branch }}
-          path: bin/packages/${{ matrix.arch }}/natmode_ci/luci-app-natmode*.ipk
+          name: "luci-app-natmode_${{ matrix.arch }}_${{ matrix.branch }}"
+          path: "bin/packages/${{ matrix.arch }}/natmode_ci/luci-app-natmode*.ipk"
           if-no-files-found: error
 
   shellcheck:
-    name: ShellCheck
+    name: "ShellCheck"
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -69,6 +66,6 @@ jobs:
         run: shellcheck -x root/usr/sbin/natmode-apply
 
       - name: Lint init.d/natmode
-        # init.d 脚本由 /etc/rc.common 在运行时注入 procd_* 函数，
-        # ShellCheck 无法 source 该文件，忽略 SC1091（source 找不到）即可。
+        # init.d scripts get procd_* functions injected at runtime by /etc/rc.common,
+        # so ShellCheck cannot source them. Ignore SC1091 (file not found).
         run: shellcheck -x -e SC1091 root/etc/init.d/natmode
