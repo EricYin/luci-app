@@ -1,0 +1,7 @@
+# 强制 shell 脚本 / 工作流用 LF，避免在 Windows 上编辑后把 CRLF 带进仓库，
+# 导致 ubuntu runner 上执行时出现 "bad interpreter: ...^M" 之类的报错。
+*.sh    text eol=lf
+*.bash  text eol=lf
+*.init  text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
