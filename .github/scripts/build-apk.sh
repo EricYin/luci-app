@@ -91,11 +91,11 @@ for mk in luci-app-*/Makefile; do
 	args=(
 		mkpkg
 		--info "name:${name}"
-		--info "version:${version}-${release}"
+		--info "version:${version}-r${release}"
 		--info "description:${title}"
 		--info "arch:noarch"
 		--files "$idir"
-		--output "$OUT/${name}-${version}-${release}.apk"
+		--output "$OUT/${name}-${version}-r${release}.apk"
 	)
 	if [ -n "$license" ]; then
 		args+=(--info "license:${license}")
@@ -109,7 +109,7 @@ for mk in luci-app-*/Makefile; do
 
 	sudo "$APK" "${args[@]}"
 	pkg_count=$((pkg_count + 1))
-	echo "built $OUT/${name}-${version}-${release}.apk"
+	echo "built $OUT/${name}-${version}-r${release}.apk"
 done
 
 if [ "$pkg_count" -eq 0 ]; then
