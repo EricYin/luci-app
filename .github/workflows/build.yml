@@ -1,47 +1,15 @@
-## ============================================================================
-##  Build LuCI packages  —  qwe3017/luci-app
-##
-##  仓库根目录下每个 luci-app-* 目录就是一个 OpenWrt/LuCI 软件包，
-##  直接作为 src-link feed 交给官方 SDK 容器编译，产出 .ipk 附件。
-##
-##  三个 job：
-##    check         结构 + shell 静态检查（编译前门禁）
-##    build         矩阵编译，每个包 × 每个 SDK 目标一个 job，产物上传为 artifact
-##    build-manual  手动指定 SDK tag 临时编译（只在 workflow_dispatch 填了 sdk 时跑）
-##    release       打 v* tag 时，把本轮所有 .ipk 挂到 GitHub Release 上
-##
-##  ── 关于 SDK 目标（matrix.sdk）────────────────────────────────────────────
-##  ARCH 直接就是官方 SDK 容器镜像的 tag，规则为「架构」或「架构-版本」：
-##      x86_64                      x86_64 的 main(snapshot)
-##      mips_24kc                   ath79 / ramips 等 mips 路由器（main）
-##      aarch64_cortex-a53          ARM64（main）
-##      x86_64-24.10-SNAPSHOT       24.10 分支，分支快照 tag，不会随小版本失效
-##      x86_64-23.05.5              23.05.5 正式版（版本号 tag，永久保留）
-##      x86_64-24.10.1              24.10.1 正式版
-##  注意：纯「架构」别名只在 main/snapshot 上发布；正式版分支必须带版本号后缀。
-##  想加目标就往下面的 sdk 列表里加一行，不要去动别的地方。
-##
-##  临时用别的 tag 编译：Actions -> 本工作流 -> Run workflow -> 填 sdk。
-##
-##  ── 说明 ──────────────────────────────────────────────────────────────────
-##  * 依赖里出现 SDK 官方 feed 里没有的包（例如 luci-app-pon-status 的
-##    airoha-ponctl）时，打包脚本会打印一条 warning 并把该依赖从 ipk 的
-##    control 里丢掉，编译本身不会失败。装到路由器上前请确认这个包已就位。
-##  * 产物路径用 bin/packages/** 通配，因为 bin/packages/ 下的一级目录是
-##    架构名（x86_64），与 SDK tag（如 x86_64-24.10-SNAPSHOT）并不相同。
-## ============================================================================
 name: Build LuCI packages
 
 on:
   push:
-分支: [main, master]
-标签: ['v*']
+    branches: [main, master]
+    tags: ['v*']
     paths-ignore:
       - '**/*.md'
       - 'LICENSE'
       - '.gitignore'
   pull_request:
-分支: [main, master]
+    branches: [main, master]
   workflow_dispatch:
     inputs:
       sdk:
