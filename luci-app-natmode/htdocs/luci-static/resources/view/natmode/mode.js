@@ -151,7 +151,8 @@ return view.extend({
 		// 否则解析失败、保存也写不回去。
 		// =========================================================
 		var m = new form.Map('natmode', _('NAT 类型'),
-			_('选择路由器对内网出向连接的 NAT 行为。数字越小越宽松，P2P / 游戏 / PT 体验越好。'));
+			_('选择路由器对内网出向连接的 NAT 行为。数字越小越宽松，P2P / 游戏 / PT 体验越好。')
+			+ _('改动后请点击下方「应用 NAT 模式」按钮立即生效。'));
 
 		var s = m.section(form.NamedSection, 'main', 'natmode');
 		s.anonymous = false;
@@ -205,52 +206,94 @@ return view.extend({
 			+ '勾选后，选择「全对称型NAT」时会自动关闭卸载（代价：吞吐下降）。'));
 		oc.default = '1';
 
-		// 保存后真正应用。
+		// =========================================================
+		// 应用逻辑 —— 三条路径全覆盖（真机踩坑定案，勿删注释）：
 		//
-		// 顺序（为什么必须是「apply(带参) → commit → reapply」）：
+		// 核心事实：这个 LuCI 分支（PonWrt fork）的 form.js 根本没有
+		// 「保存并应用」按钮（全文无 handleSaveApply / cbi-button-apply），
+		// 地图页脚只有「保存」和「复位」。用户点「保存」只会把 UCI 改动
+		// 暂存/提交，natmode-apply 从头到尾不会被执行；随后 do_sync 按
+		// firewall 里的旧 fullcone 状态反向同步，把模式改回去 ——
+		// 这才是「怎么点都不生效」的最终根因（真机浏览器实测确认）。
 		//
-		//   1) apply —— 带上本页点选的值作为显式参数，必须【先】执行。
-		//      本页的 UCI 改动经 rpcd 暂存，要等第 2 步才提交；而 CLI uci
-		//      读不到 rpcd 的暂存值 —— natmode-apply 若靠读 UCI 拿新模式，
-		//      拿到的是旧值（实测：选 NAT3 应用后仍是 NAT1，随后 commit
-		//      落地 restricted 又被 do_sync 强制改回 fullcone）。
-		//      所以在 save 之前先把表单值抓下来传给脚本，由脚本统一
-		//      写 UCI（幂等）+ firewall 并落地，成为唯一权威写入方。
-		//      若先做 ui.changes.apply()，firewall reload 会回调
-		//      init.d/natmode 的 reapply → do_sync，此时 firewall.fullcone
-		//      还是旧值（1），do_sync 会把刚选的模式改回 fullcone。
-		//
-		//   2) ui.changes.apply() —— 提交 rpcd 暂存的 UCI 改动并触发
-		//      firewall reload。因第 1 步已把两边写成一致，这里的同值
-		//      提交是幂等的，fw4 重建 ruleset 也不会打架。
-		//
-		//   3) reapply —— 兜底。按一致的 UCI 状态重建 nft 规则。
-		m.handleSaveApply = function(ev) {
-			var self = this;
-			// 必须在 save 之前抓：save 后表单值进 rpcd 暂存，脚本读不到
-			var wantMode = o.formvalue('main') || 'fullcone';
-			var want6    = o6.formvalue('main') || '0';
-			var wantOff  = oc.formvalue('main') || '1';
+		// 因此：
+		//   1) 页面自带醒目的「应用 NAT 模式」按钮（主路径），
+		//      直接读表单点选值，显式传参调 natmode-apply —— 脚本是
+		//      唯一权威写入方（写 UCI + firewall，幂等），不依赖任何
+		//      表单/uci 提交时序。
+		//   2) 钩住 ui.changes.apply：覆盖「保存后点全局未保存更改条的
+		//      保存并应用」的路径 —— 先跑脚本再放行原 apply，避免
+		//      firewall reload 回调 do_sync 时两边不一致而打架。
+		//      （标准 LuCI 的地图「保存并应用」按钮最终也走
+		//      ui.changes.apply，同样被此钩子覆盖。）
+		// =========================================================
+		function readSelection() {
+			return {
+				mode: o.formvalue('main') || 'fullcone',
+				fc6:  o6.formvalue('main') || '0',
+				off:  oc.formvalue('main') || '1'
+			};
+		}
 
-			return self.handleSave(ev).then(function() {
-				return fs.exec('/usr/sbin/natmode-apply',
-					['apply', wantMode, want6, wantOff]);
-			}).then(function(res) {
-				if (res && typeof res.code === 'number' && res.code !== 0)
-					throw new Error((res.stderr || res.stdout ||
-						'natmode-apply 退出码 ' + res.code).trim());
-				return ui.changes.apply();
-			}).then(function() {
-				return fs.exec('/usr/sbin/natmode-apply', ['reapply']);
-			}).then(function() {
-				ui.addNotification(null,
-					E('p', _('NAT 模式已应用，防火墙已重载。')), 'success');
-				window.setTimeout(function() { window.location.reload(); }, 1500);
-			}).catch(function(e) {
-				ui.addNotification(null,
-					E('p', _('应用失败：') + (e && e.message ? e.message : e)), 'error');
-			});
-		};
+		function runApply(sel) {
+			return fs.exec('/usr/sbin/natmode-apply',
+				['apply', sel.mode, sel.fc6, sel.off])
+				.then(function(res) {
+					if (res && typeof res.code === 'number' && res.code !== 0)
+						throw new Error((res.stderr || res.stdout ||
+							'natmode-apply 退出码 ' + res.code).trim());
+				});
+		}
+
+		// 兜底钩子：任何 ui.changes.apply（全局红条 / 标准 LuCI 的保存并应用）
+		// 之前，先把当前点选的模式落地，保证 firewall 与 natmode 一致
+		var origApply = (ui.changes && typeof ui.changes.apply === 'function')
+			? ui.changes.apply : null;
+
+		if (origApply && !ui.changes.__natmodeHooked) {
+			ui.changes.__natmodeHooked = true;
+			ui.changes.apply = function() {
+				var args = arguments;
+				var sel = readSelection();
+				return runApply(sel)
+					.catch(function(e) {
+						ui.addNotification(null,
+							E('p', _('应用 NAT 模式失败：')
+								+ (e && e.message ? e.message : e)), 'error');
+					})
+					.then(function() {
+						return origApply.apply(ui.changes, args);
+					});
+			};
+		}
+
+		// 主路径按钮：放在表单下方，点了立即生效。
+		// 已自行跑过 runApply，所以这里直接用未挂钩的原始 apply 提交
+		// 暂存改动（若有），避免脚本重复执行两遍。
+		var applyBtn = E('button', {
+			'class': 'cbi-button cbi-button-apply important',
+			'click': ui.createHandlerFn(m, function(ev) {
+				var sel = readSelection();
+				return runApply(sel)
+					.then(function() {
+						if (origApply)
+							return origApply.call(ui.changes);
+						return null;
+					})
+					.then(function() {
+						ui.addNotification(null,
+							E('p', _('NAT 模式已应用，防火墙已重载。')), 'success');
+						window.setTimeout(function() {
+							window.location.reload();
+						}, 1500);
+					})
+					.catch(function(e) {
+						ui.addNotification(null,
+							E('p', _('应用失败：')
+								+ (e && e.message ? e.message : e)), 'error');
+					});
+			})
+		}, _('应用 NAT 模式'));
 
 		// =========================================================
 		// m.render() 返回的是 Promise，不是 DOM 节点！
@@ -271,6 +314,7 @@ return view.extend({
 				kids = kids.concat(nodes);
 			else if (nodes != null)
 				kids.push(nodes);
+			kids.push(E('div', { 'class': 'cbi-page-actions' }, [ applyBtn ]));
 			return E('div', {}, kids);
 		});
 	}
