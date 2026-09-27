@@ -5,8 +5,8 @@
 ##  直接作为 src-link feed 交给官方 SDK 容器编译，产出 .ipk 附件。
 ##
 ##  四个 job：
-##    check         结构 + shell 静态检查（编译前门禁）
-##    build         矩阵编译，每个包 × 每个 SDK 目标一个 job，产物上传为 artifact
+##    check         结构 + shell 静态检查（与 build 并行，结果在 Annotations 里看）
+##    build         每个 SDK 目标一个 job，一次编完所有 luci-app-* 包，上传 artifact
 ##    build-manual  手动指定 SDK tag 临时编译（只在 workflow_dispatch 填了 sdk 时跑）
 ##    release       打 v* tag 时，把本轮所有 .ipk 挂到 GitHub Release 上
 ##
@@ -111,18 +111,18 @@ jobs:
           echo "validated $n json file(s)"
 
   # --------------------------------------------------------------------------
-  # 编译：包 × SDK 目标 的矩阵，fail-fast=false 让单个组合失败不影响其他
+  # 编译：每个 SDK 目标一个 job，一次编完所有 luci-app-* 包。
+  # 不再按包拆矩阵：SDK 镜像拉取 + feeds 初始化是每 job 固定开销（数分钟），
+  # 拆开后每个包都要付一遍，合并后总耗时取决于最慢的单包而非「检查+重复初始化」。
+  # 包列表自动探测，新增包目录无需改本文件。
+  # 与 check 并行跑：结构错误本来也会让编译挂掉，没必要串行等它。
   # --------------------------------------------------------------------------
   build:
-    name: ${{ matrix.pkg }} · ${{ matrix.sdk }}
-    needs: check
+    name: Build · ${{ matrix.sdk }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        pkg:
-          - luci-app-natmode
-          - luci-app-pon-status
         sdk:
           # 只构建 OpenWrt 25.12 · ARM64；产物为 all 架构 ipk，通用所有 ARM64 设备
           - aarch64_cortex-a53-25.12-SNAPSHOT
@@ -132,18 +132,26 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Build ${{ matrix.pkg }} for ${{ matrix.sdk }}
+      - name: Detect packages
+        run: |
+          set -euo pipefail
+          pkgs="$(find . -maxdepth 1 -type d -name 'luci-app-*' -printf '%f ' | sed 's/ $//')"
+          [ -n "$pkgs" ] || { echo 'no luci-app-* package found'; exit 1; }
+          echo "PKGS=$pkgs" >> "$GITHUB_ENV"
+          echo "packages to build: $pkgs"
+
+      - name: Build for ${{ matrix.sdk }}
         uses: openwrt/gh-action-sdk@v11
         env:
           ARCH: ${{ matrix.sdk }}
           FEEDNAME: luci_app_ci
-          PACKAGES: ${{ matrix.pkg }}
+          PACKAGES: ${{ env.PKGS }}
           BUILD_LOG: 1
 
       - name: Upload ipk / apk
         uses: actions/upload-artifact@v5
         with:
-          name: ipk-${{ matrix.pkg }}-${{ matrix.sdk }}
+          name: ipk-${{ matrix.sdk }}
           path: |
             bin/packages/**/*.ipk
             bin/packages/**/*.apk
@@ -154,7 +162,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v5
         with:
-          name: logs-${{ matrix.pkg }}-${{ matrix.sdk }}
+          name: logs-${{ matrix.sdk }}
           path: logs/
           if-no-files-found: ignore
           retention-days: 7
