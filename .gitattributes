@@ -1,7 +1,12 @@
-# 强制 shell 脚本 / 工作流用 LF，避免在 Windows 上编辑后把 CRLF 带进仓库，
-# 导致 ubuntu runner 上执行时出现 "bad interpreter: ...^M" 之类的报错。
+# 强制 shell 脚本 / 工作流 / UCI 配置用 LF（含无扩展名的 sbin、init.d 脚本），
+# 避免 Windows 上检出成 CRLF 后，runner 或路由器执行时报 "bad interpreter: ...^M"。
 *.sh    text eol=lf
 *.bash  text eol=lf
 *.init  text eol=lf
 *.yml   text eol=lf
 *.yaml  text eol=lf
+luci-app-*/root/usr/sbin/*         text eol=lf
+luci-app-*/root/usr/bin/*          text eol=lf
+luci-app-*/root/etc/init.d/*       text eol=lf
+luci-app-*/root/etc/config/*       text eol=lf
+luci-app-*/root/etc/uci-defaults/* text eol=lf
