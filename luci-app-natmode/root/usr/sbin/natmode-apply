@@ -52,7 +52,7 @@
 #   坑 2：硬件/软件卸载让 NAT4 不可观测
 #     flow offload（尤其硬件卸载走 PPE）会把流量绕过 conntrack 直接转发，
 #     nft 的 masquerade 规则根本不参与，随机端口无从谈起。
-#     对策：应用 symmetric 时按 auto_offload 选项自动关闭卸载（默认开），
+#     对策：应用 symmetric 时按 auto_offload 选项自动关闭卸载（默认关），
 #           否则 NAT4 只是「配置上了」但测不出来。
 
 CONF_MODE="natmode.main.mode"
@@ -348,7 +348,7 @@ do_apply() {
 		symmetric)
 			set_fullcone_exact 0
 			# 卸载与 NAT4 互斥：开着卸载，随机端口规则根本不参与转发
-			[ "$(get_flag "$CONF_OFFLOAD" 1)" = "1" ] && offload_disable
+			[ "$(get_flag "$CONF_OFFLOAD" 0)" = "1" ] && offload_disable
 			;;
 	esac
 

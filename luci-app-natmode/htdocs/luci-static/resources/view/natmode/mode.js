@@ -303,8 +303,9 @@ return view.extend({
 		// 默认值必须是字符串 '0'，不能是数字 0 ——
 		// form.js 的 Flag 用 === '1' 判定，数字会落到 false 分支但
 		// 写入时可能出现类型不一致，统一用字符串最稳。
+		// 注意 default 只在 UCI 没有该键时生效，须与 /etc/config/natmode 一致。
 		var o6 = s.option(form.Flag, 'fullcone6',
-			_('同时开启 IPv6 FullCone NAT（fullcone6）'),
+			_('同时开启 IPv6 FullCone NAT'),
 			_('对应 firewall.@defaults[0].fullcone6。'
 			+ 'IPv6 通常有公网前缀、不做 NAT，收益有限；'
 			+ '少数环境下反而会导致 IPv6 连接异常，故默认关闭。'
@@ -316,7 +317,7 @@ return view.extend({
 			_('NAT4 的随机端口依赖 nft masquerade，而卸载（尤其硬件卸载走 PPE）'
 			+ '会把流量绕过 conntrack 直接转发 —— 两者互斥，开着卸载 NAT4 实测仍是 NAT3。'
 			+ '勾选后，选择「全对称型NAT」时会自动关闭卸载（代价：吞吐下降）。'));
-		oc.default = '1';
+		oc.default = '0';
 
 		// =========================================================
 		// 应用逻辑 —— 三条路径全覆盖（真机踩坑定案，勿删注释）：
@@ -343,7 +344,7 @@ return view.extend({
 			return {
 				mode: o.formvalue('main') || 'fullcone',
 				fc6:  o6.formvalue('main') || '0',
-				off:  oc.formvalue('main') || '1'
+				off:  oc.formvalue('main') || '0'
 			};
 		}
 

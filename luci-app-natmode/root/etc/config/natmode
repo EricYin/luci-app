@@ -24,4 +24,4 @@ config natmode 'main'
 	#       实测仍是 NAT3。
 	# 代价：关闭后吞吐会下降（硬件转发失效）。
 	# 置 0 则保留卸载，但 NAT4 无法真正生效。
-	option auto_offload '1'
+	option auto_offload '0'
