@@ -1,17 +1,45 @@
 #!/bin/sh /etc/rc.common
 # SPDX-License-Identifier: Apache-2.0
 #
+# 必须在 fw4（START=19）之后、且尽量靠后：NAT4 的随机端口规则要插进 fw4 的
+# srcnat_<zone> 链，链还没生成时插入等于没注入 —— 「重启后必须打开 NAT 类型
+# 页才生效」的原因。
 
-START=25
+# START/STOP/USE_PROCD 是 rc.common 框架约定变量，shellcheck 不认识
+# shellcheck disable=SC2034
+START=99
 STOP=90
 
 USE_PROCD=1
+
+# WAN 可能晚于本服务上线：后台幂等重试，直到规则真正生效
+bootstrap_rules() {
+	(
+		i=0
+		while [ "$i" -lt 10 ]; do
+			i=$((i + 1))
+			sleep 3
+			[ "$(uci -q get natmode.main.mode 2>/dev/null)" = "symmetric" ] || break
+			/usr/sbin/natmode-apply reapply >/dev/null 2>&1
+			r="$(/usr/sbin/natmode-apply status 2>/dev/null |
+				sed -n 's/^random_rules=//p')"
+			[ -n "$r" ] && [ "$r" != "0" ] && break
+		done
+	) &
+}
 
 start_service() {
 	procd_open_instance
 	procd_close_instance
 
+	# apk 运行时安装不会建 rc.d 软链，服务可能从未在开机跑过 → 顺手补 enable
+	if ! "$0" enabled >/dev/null 2>&1; then
+		"$0" enable >/dev/null 2>&1
+		logger -t natmode "已重建开机自启链接（此前未启用）"
+	fi
+
 	/usr/sbin/natmode-apply apply >/dev/null 2>&1
+	bootstrap_rules
 }
 
 reload_service() {

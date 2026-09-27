@@ -10,6 +10,16 @@ log() {
 	logger -t natmode "$@"
 }
 
+# apk 运行时安装不会建 rc.d 软链，开机可能从没跑过本服务 → 幂等补 enable，
+# 用户开一次页面（status）或点一次应用（apply）即可修复
+ensure_enabled() {
+	[ -x /etc/init.d/natmode ] || return 0
+	if ! /etc/init.d/natmode enabled >/dev/null 2>&1; then
+		/etc/init.d/natmode enable >/dev/null 2>&1 &&
+			log "已启用开机自启（/etc/init.d/natmode enable）"
+	fi
+}
+
 
 get_mode() {
 	m="$(uci -q get "$CONF_MODE" 2>/dev/null)"
@@ -178,6 +188,8 @@ do_apply() {
 	local want="$1" want6="$2" wantoff="$3"
 	local mode
 
+	ensure_enabled
+
 	case "$want" in
 		fullcone|restricted|symmetric)
 			uci set "$CONF_MODE"="$want" 2>/dev/null
@@ -243,6 +255,7 @@ do_reapply() {
 
 do_status() {
 	local mode fc effective rand chains synced=0 healed=0
+	ensure_enabled
 	mode="$(get_mode)"
 	fc="$(uci -q get firewall.@defaults[0].fullcone 2>/dev/null)"
 	fc="${fc:-0}"
