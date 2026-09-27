@@ -37,6 +37,121 @@ function modeLabel(m) {
 	}
 }
 
+// =========================================================
+// 移动端 / 通用版式优化（真机 Argon 2.4.7 + PonWrt fork 实测定制）
+//
+// fork 的 CBIListValue.renderWidget → ui.Select(widget='radio') 的 DOM 是
+// 扁平重复的  input.cbi-input-radio + label(for,空) + span(选项文字) + <br>；
+// 主题只有 .cbi-input-radio{margin-top:.1rem}，没有任何布局规则，
+// 而 .cbi-value{line-height:2.4rem} + .cbi-value-title{float:left;width:23rem}
+// 在窄屏上直接把页面撕开（行距巨大、标题/描述两栏错位）。
+//
+// 不能整个换掉控件：fork 的 AbstractValue.formvalue 走
+// getUIElement() → dom 绑定的 ui.Select / ui.Checkbox 类实例的
+// getValue()/isChecked()。因此只重排框架 div 的子节点 + 注入页面级 CSS，
+// 框架 div 的 id / 绑定实例原封不动，取值链路不受影响。
+// =========================================================
+function pageCss() {
+	return [
+		'.natmode-page{font-size:.9rem;line-height:1.6}',
+		'.natmode-page .cbi-map-descr{line-height:1.6;padding:.1rem .2rem .5rem;opacity:.85}',
+		// 选项外框：改为上下堆叠，掐掉 23rem 浮动标题列与 2.4rem 行距
+		'.natmode-page .cbi-value{display:block;line-height:1.6;padding:.6rem .9rem}',
+		'.natmode-page .cbi-value:nth-of-type(2n){background:transparent}',
+		'.natmode-page .cbi-value-title{display:block;float:none;width:auto;text-align:left;padding:0 0 .3rem;font-weight:600;line-height:1.5}',
+		'.natmode-page .cbi-value-field{display:block;width:auto}',
+		'.natmode-page .cbi-value-description{display:block;padding:.45rem .1rem 0;line-height:1.55;opacity:.62}',
+		// NAT 模式卡片式单选（js 后处理把 input/label/span 包进 .nat-opt）
+		'.natmode-page .nat-opt{display:flex;align-items:flex-start;margin:.5rem 0;padding:.6rem .75rem;border:1px solid var(--lighter);border-radius:.55rem;background:var(--white);cursor:pointer}',
+		'.natmode-page .nat-opt.checked{border-color:var(--primary);box-shadow:inset 0 0 0 1px var(--primary)}',
+		'.natmode-page .nat-opt input[type="radio"]{flex:0 0 auto;width:1.1rem;height:1.1rem;margin:.18rem .6rem 0 0}',
+		'.natmode-page .nat-opt input[type="radio"]+label{margin:0}',
+		'.natmode-page .nat-opt span{flex:1 1 auto;display:block;min-width:0}',
+		'.natmode-page .nat-choice strong{display:block;font-weight:600;line-height:1.5}',
+		'.natmode-page .nat-choice .nat-choice-desc{display:block;font-size:.78rem;opacity:.6;line-height:1.55;margin-top:.1rem}',
+		// Flag：标题移进开关行，整行可点
+		'.natmode-page .cbi-checkbox.nat-check{display:flex;align-items:center;margin:.2rem 0;padding:.55rem .75rem;border:1px solid var(--lighter);border-radius:.55rem;background:var(--white);cursor:pointer}',
+		'.natmode-page .nat-check-title{flex:1 1 auto;font-weight:500;line-height:1.5}',
+		'.natmode-page .nat-check input[type="checkbox"]{flex:0 0 auto;width:1.15rem !important;height:1.15rem !important;margin:0 0 0 .6rem}',
+		// 状态表：窄屏单行一条，左标签右取值
+		'.natmode-page .table{display:block}',
+		'.natmode-page .nat-status .tr{display:flex;align-items:baseline;padding:.45rem .2rem;border-bottom:1px solid var(--lighter)}',
+		'.natmode-page .nat-status .tr:last-child{border-bottom:0}',
+		'.natmode-page .nat-status .td{flex:1 1 auto;display:block;width:auto;padding:0;line-height:1.5;text-align:left;word-break:break-word}',
+		'.natmode-page .nat-status .td:first-child{flex:0 0 38%;opacity:.65;font-size:.82rem}',
+		// 应用按钮：通栏大按钮，手机好点
+		'.natmode-page .cbi-page-actions{padding:.4rem 0 0}',
+		'.natmode-page .cbi-page-actions .cbi-button{width:100%;padding:.75rem 1rem;font-size:1rem;border-radius:.55rem}'
+	].join('\n');
+}
+
+// 单选选项富文本：加粗标题 + 小字描述（fork 的 value() 支持 DOM 元素，
+// 最终被塞进 span.nat-choice 里）
+function radioChoice(title, desc) {
+	return E('span', { 'class': 'nat-choice' }, [
+		E('strong', {}, title),
+		E('span', { 'class': 'nat-choice-desc' }, desc)
+	]);
+}
+
+// 渲染后处理：卡片化单选 + Flag 标题内联。只动框架 div 的子节点，
+// 不碰框架 div 本身（formvalue 依赖其上的控件类实例绑定）。
+function beautifyPage(root) {
+	// --- 1. NAT 模式单选卡片化 ---
+	var frame = root.querySelector('[id="cbid.natmode.main.mode"]');
+	if (frame) {
+		var brs = frame.querySelectorAll(':scope > br');
+		Array.prototype.forEach.call(brs, function(br) { br.parentNode.removeChild(br); });
+
+		var inputs = frame.querySelectorAll(':scope > input[type="radio"]');
+		Array.prototype.forEach.call(inputs, function(input) {
+			var label = input.nextElementSibling;       // fork 生成的空 label(for)
+			var span = label ? label.nextElementSibling : null;  // 选项文字
+			var card = E('div', { 'class': 'nat-opt' + (input.checked ? ' checked' : '') });
+			frame.insertBefore(card, input);
+			card.appendChild(input);
+			if (label) card.appendChild(label);
+			if (span) card.appendChild(span);
+			// 点击卡片任意处即选中（input/label 自带浏览器原生行为，跳过防重复）
+			card.addEventListener('click', function(ev) {
+				if (ev.target === input || ev.target.tagName === 'LABEL') return;
+				if (!input.checked) input.click();
+			});
+		});
+
+		frame.addEventListener('change', function() {
+			var cards = frame.querySelectorAll('.nat-opt');
+			Array.prototype.forEach.call(cards, function(c) {
+				var i = c.querySelector('input[type="radio"]');
+				c.classList.toggle('checked', !!(i && i.checked));
+			});
+		});
+	}
+
+	// --- 2. Flag：标题并入开关行，整行可点 ---
+	[ 'cbid.natmode.main.fullcone6', 'cbid.natmode.main.auto_offload' ]
+		.forEach(function(cbid) {
+			var cb = root.querySelector('[id="' + cbid + '"]');
+			if (!cb || !cb.classList.contains('cbi-checkbox'))
+				return;
+			var optDiv = cb.closest('.cbi-value');
+			var title = optDiv ? optDiv.querySelector('.cbi-value-title') : null;
+			if (title) {
+				cb.insertBefore(E('strong', { 'class': 'nat-check-title' },
+					[ title.textContent ]), cb.firstChild);
+				title.style.display = 'none';
+			}
+			cb.classList.add('nat-check');
+			cb.addEventListener('click', function(ev) {
+				var input = cb.querySelector('input[type="checkbox"]');
+				// input 自带原生行为；label(for) 也会触发浏览器转发，跳过防双重切换
+				if (!input || ev.target === input || ev.target.tagName === 'LABEL')
+					return;
+				input.click();
+			});
+		});
+}
+
 function offloadLabel(v) {
 	switch (v) {
 		case 'hw':  return _('硬件卸载');
@@ -111,7 +226,7 @@ function renderStatus(st) {
 		warn.push(E('p', {}, _('未找到 fw4 的 srcnat_<zone> 链：'
 			+ 'WAN 区域可能未启用 MASQUERADE，随机端口规则无处可插。')));
 
-	var table = E('table', { 'class': 'table' });
+	var table = E('table', { 'class': 'table nat-status' });
 	for (var i = 0; i < rows.length; i += 2) {
 		table.appendChild(E('tr', { 'class': 'tr' }, [
 			E('td', { 'class': 'td left', 'width': '33%' }, [ rows[i] ]),
@@ -174,15 +289,17 @@ return view.extend({
 		var o = s.option(form.ListValue, 'mode', _('NAT 类型'));
 		o.widget = 'radio';
 		o.orientation = 'vertical';
-		o.value('fullcone',
-			_('全锥形NAT') + '（NAT1）— ' +
-			_('最宽松，端点无关映射 + 端点无关过滤。游戏联机、PT 做种、PCDN 最优。'));
-		o.value('restricted',
-			_('受限型NAT') + '（NAT3）— ' +
-			_('系统默认。端点无关映射 + 地址端口相关过滤，日常上网无影响。'));
-		o.value('symmetric',
-			_('全对称型NAT') + '（NAT4）— ' +
-			_('端口完全随机，映射不可预测，打洞基本不可用。仅用于特殊合规场景。'));
+		// 选项用富文本（fork 的 value() 接受 DOM 节点）：
+		// 标题加粗单独一行，长描述变成小字第二行 —— 手机上不再挤成一坨
+		o.value('fullcone', radioChoice(
+			_('全锥形NAT') + '（NAT1）',
+			_('最宽松，端点无关映射 + 端点无关过滤。游戏联机、PT 做种、PCDN 最优。')));
+		o.value('restricted', radioChoice(
+			_('受限型NAT') + '（NAT3）',
+			_('系统默认。端点无关映射 + 地址端口相关过滤，日常上网无影响。')));
+		o.value('symmetric', radioChoice(
+			_('全对称型NAT') + '（NAT4）',
+			_('端口完全随机，映射不可预测，打洞基本不可用。仅用于特殊合规场景。')));
 		o.default = 'fullcone';
 
 		// IPv6 FullCone 独立开关，默认【不勾选】。
@@ -309,13 +426,16 @@ return view.extend({
 		// 正确做法：等 Promise resolve 拿到节点数组，再组装。
 		// =========================================================
 		return m.render().then(function(nodes) {
-			var kids = [ renderStatus(st) ];
+			var kids = [ E('style', { 'type': 'text/css' }, [ pageCss() ]), renderStatus(st) ];
 			if (Array.isArray(nodes))
 				kids = kids.concat(nodes);
 			else if (nodes != null)
 				kids.push(nodes);
 			kids.push(E('div', { 'class': 'cbi-page-actions' }, [ applyBtn ]));
-			return E('div', {}, kids);
+			var root = E('div', { 'class': 'natmode-page' }, kids);
+			// 表格/单选/开关的移动端卡片化（在 DOM 就绪后做后处理）
+			beautifyPage(root);
+			return root;
 		});
 	}
 });
