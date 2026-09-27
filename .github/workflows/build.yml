@@ -1,29 +1,24 @@
 ## ============================================================================
 ##  Build LuCI packages  —  qwe3017/luci-app
 ##
-##  仓库根目录下每个 luci-app-* 目录就是一个 OpenWrt/LuCI 软件包，
-##  直接作为 src-link feed 交给官方 SDK 容器编译，产出 .ipk 附件。
+##  仓库根目录下每个 luci-app-* 目录就是一个 OpenWrt/LuCI 软件包。
+##  这些包是纯数据包（js/shell/json，无 C 代码），所以不走官方 SDK 容器：
+##  直接用 apk-tools 官方静态二进制的 `apk mkpkg` 组装 OpenWrt 25.12 的 apk 包
+##  （25.12 起包管理器已从 opkg/.ipk 切换为 apk/.apk）。全程无 docker，< 1 分钟。
 ##
-##  四个 job：
-##    check         结构 + shell 静态检查（与 build 并行，结果在 Annotations 里看）
-##    build         每个 SDK 目标一个 job，一次编完所有 luci-app-* 包，上传 artifact
-##    build-manual  手动指定 SDK tag 临时编译（只在 workflow_dispatch 填了 sdk 时跑）
-##    release       打 v* tag 时，把本轮所有 .ipk 挂到 GitHub Release 上
+##  两个 job（并行）：
+##    check    结构 + shell 静态检查
+##    build    无 SDK 打包所有 luci-app-*，产物为 noarch apk，任何 25.12 设备通用
+##    release  打 v* tag 时，把本轮所有 .apk 挂到 GitHub Release 上
 ##
-##  ── 关于 SDK 目标（matrix.sdk）────────────────────────────────────────────
-##  当前只构建 OpenWrt 25.12 的 ARM64 包：
-##      aarch64_cortex-a53-25.12-SNAPSHOT   25.12 分支快照，跟随分支最新包源，
-##                                          不会因小版本更迭失效
-##  两个包都是纯 LuCI 应用，编译产物是 all 架构 ipk，可装到任意 ARM64 设备；
-##  换设备变体（cortex-a72/a76/generic）时改下面的 sdk 列表即可。
-##  临时用别的 tag 编译：Actions -> 本工作流 -> Run workflow -> 填 sdk。
+##  ── 安装说明 ────────────────────────────────────────────────────────────────
+##  产物未签名，设备上安装：
+##      apk add --allow-untrusted ./luci-app-xxx-<version>.apk
 ##
 ##  ── 说明 ──────────────────────────────────────────────────────────────────
-##  * 依赖里出现 SDK 官方 feed 里没有的包（例如 luci-app-pon-status 的
-##    airoha-ponctl）时，打包脚本会打印一条 warning 并把该依赖从 ipk 的
-##    control 里丢掉，编译本身不会失败。装到路由器上前请确认这个包已就位。
-##  * 产物路径用 bin/packages/** 通配，因为 bin/packages/ 下的一级目录是
-##    架构名（aarch64_cortex-a53），与 SDK tag（aarch64_cortex-a53-25.12-SNAPSHOT）并不相同。
+##  * 依赖只写进包元数据（depends 字段），构建过程不检查依赖是否真实存在；
+##    装到路由器上前请确认依赖包已就位（例如 airoha-ponctl 非官方包，需自备）。
+##  * 打包逻辑见 .github/scripts/build-apk.sh。
 ## ============================================================================
 name: Build LuCI packages
 
@@ -38,17 +33,6 @@ on:
   pull_request:
     branches: [main, master]
   workflow_dispatch:
-    inputs:
-      sdk:
-        description: '临时编译用的 SDK 镜像 tag，例如 aarch64_cortex-a53-25.12-SNAPSHOT。留空则只跑默认矩阵'
-        type: string
-        required: false
-        default: ''
-      packages:
-        description: '要编译的包目录名，空格分隔'
-        type: string
-        required: false
-        default: 'luci-app-natmode luci-app-pon-status'
 
 permissions:
   contents: read
@@ -111,96 +95,44 @@ jobs:
           echo "validated $n json file(s)"
 
   # --------------------------------------------------------------------------
-  # 编译：每个 SDK 目标一个 job，一次编完所有 luci-app-* 包。
-  # 不再按包拆矩阵：SDK 镜像拉取 + feeds 初始化是每 job 固定开销（数分钟），
-  # 拆开后每个包都要付一遍，合并后总耗时取决于最慢的单包而非「检查+重复初始化」。
-  # 包列表自动探测，新增包目录无需改本文件。
-  # 与 check 并行跑：结构错误本来也会让编译挂掉，没必要串行等它。
+  # 打包：无 SDK、无 docker。包是纯数据包（js/shell/json，无 C 代码），
+  # 用 apk-tools 官方的 `apk mkpkg` 直接组装 OpenWrt 25.12 的 apk 包，
+  # 与 buildroot 25.12 的打包路径一致（include/package-pack.mk apk 分支）。
+  # 相比 gh-action-sdk 省掉镜像拉取 + feeds 初始化，全程 < 1 分钟。
+  # 产物为 noarch，任意 OpenWrt 25.12 设备（不限 ARM64）通用。
   # --------------------------------------------------------------------------
   build:
-    name: Build · ${{ matrix.sdk }}
+    name: Build apk (no-SDK)
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        sdk:
-          # 只构建 OpenWrt 25.12 · ARM64；产物为 all 架构 ipk，通用所有 ARM64 设备
-          - aarch64_cortex-a53-25.12-SNAPSHOT
     steps:
       - name: Checkout
         uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
 
-      - name: Detect packages
+      - name: Install apk-tools (official static binary, no docker)
         run: |
           set -euo pipefail
-          pkgs="$(find . -maxdepth 1 -type d -name 'luci-app-*' -printf '%f ' | sed 's/ $//')"
-          [ -n "$pkgs" ] || { echo 'no luci-app-* package found'; exit 1; }
-          echo "PKGS=$pkgs" >> "$GITHUB_ENV"
-          echo "packages to build: $pkgs"
+          base="https://dl-cdn.alpinelinux.org/alpine/latest-stable/main/x86_64"
+          name="$(curl -fsSL "$base/" | grep -oE 'apk-tools-static-[0-9][^"]*\.apk' | sort -uV | tail -1)"
+          [ -n "$name" ] || { echo 'apk-tools-static not found on Alpine CDN' >&2; exit 1; }
+          echo "using $name"
+          curl -fsSL -o apk-tools-static.apk "$base/$name"
+          tar -xzf apk-tools-static.apk sbin/apk.static
+          chmod +x sbin/apk.static
+          ./sbin/apk.static --version
 
-      - name: Build for ${{ matrix.sdk }}
-        uses: openwrt/gh-action-sdk@v11
-        env:
-          ARCH: ${{ matrix.sdk }}
-          FEEDNAME: luci_app_ci
-          PACKAGES: ${{ env.PKGS }}
-          BUILD_LOG: 1
+      - name: Build packages
+        run: bash .github/scripts/build-apk.sh ./sbin/apk.static dist
 
-      - name: Upload ipk / apk
+      - name: Upload apk
         uses: actions/upload-artifact@v5
         with:
-          name: ipk-${{ matrix.sdk }}
-          path: |
-            bin/packages/**/*.ipk
-            bin/packages/**/*.apk
+          name: apk-openwrt-25.12
+          path: dist/*.apk
           if-no-files-found: error
           retention-days: 14
 
-      - name: Upload build logs
-        if: failure()
-        uses: actions/upload-artifact@v5
-        with:
-          name: logs-${{ matrix.sdk }}
-          path: logs/
-          if-no-files-found: ignore
-          retention-days: 7
-
   # --------------------------------------------------------------------------
-  # 手动编译：Run workflow 时填了 sdk 才会跑，一次编完所有包
-  # --------------------------------------------------------------------------
-  build-manual:
-    name: Manual build · ${{ inputs.sdk }}
-    if: github.event_name == 'workflow_dispatch' && inputs.sdk != ''
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-
-      - name: Build ${{ inputs.packages }} for ${{ inputs.sdk }}
-        uses: openwrt/gh-action-sdk@v11
-        env:
-          ARCH: ${{ inputs.sdk }}
-          FEEDNAME: luci_app_ci
-          PACKAGES: ${{ inputs.packages }}
-          IGNORE_ERRORS: 1
-          BUILD_LOG: 1
-
-      - name: Upload ipk / apk
-        uses: actions/upload-artifact@v5
-        with:
-          name: ipk-manual-${{ inputs.sdk }}
-          path: |
-            bin/packages/**/*.ipk
-            bin/packages/**/*.apk
-          if-no-files-found: warn
-          retention-days: 14
-
-  # --------------------------------------------------------------------------
-  # 发布：打 v* tag 时，把矩阵产出的所有 .ipk 合成一个 Release
+  # 发布：打 v* tag 时，把本轮所有 .apk 合成一个 Release
   # --------------------------------------------------------------------------
   release:
     name: Release
@@ -213,7 +145,7 @@ jobs:
       - name: Download all build artifacts
         uses: actions/download-artifact@v5
         with:
-          pattern: ipk-*
+          pattern: apk-*
           merge-multiple: true
           path: dist
 
@@ -227,7 +159,7 @@ jobs:
           set -euo pipefail
           tag="$GITHUB_REF_NAME"
           shopt -s nullglob
-          files=(dist/*.ipk dist/*.apk)
+          files=(dist/*.apk)
           if [ "${#files[@]}" -eq 0 ]; then
             echo "no package to publish"
             exit 1
