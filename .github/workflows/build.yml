@@ -67,7 +67,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install tools
         run: |
@@ -128,7 +128,7 @@ jobs:
           - aarch64_cortex-a53-25.12-SNAPSHOT
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -141,7 +141,7 @@ jobs:
           BUILD_LOG: 1
 
       - name: Upload ipk / apk
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: ipk-${{ matrix.pkg }}-${{ matrix.sdk }}
           path: |
@@ -152,7 +152,7 @@ jobs:
 
       - name: Upload build logs
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: logs-${{ matrix.pkg }}-${{ matrix.sdk }}
           path: logs/
@@ -168,7 +168,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -182,7 +182,7 @@ jobs:
           BUILD_LOG: 1
 
       - name: Upload ipk / apk
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: ipk-manual-${{ inputs.sdk }}
           path: |
@@ -203,7 +203,7 @@ jobs:
       contents: write
     steps:
       - name: Download all build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           pattern: ipk-*
           merge-multiple: true

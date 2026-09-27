@@ -7,6 +7,8 @@
 #   fw4 每次 reload 会重建整张 ruleset，插入的 fully-random 规则随之消失。
 #   若本服务早于 firewall 启动，规则会被随后的 fw4 冲掉。
 
+# START/STOP/USE_PROCD 是 /etc/rc.common 框架约定的变量，shellcheck 不认识
+# shellcheck disable=SC2034
 START=25
 STOP=90
 
