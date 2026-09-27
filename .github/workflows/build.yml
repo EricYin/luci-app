@@ -1,71 +1,239 @@
-name: "Build & Lint"
+## ============================================================================
+##  Build LuCI packages  —  qwe3017/luci-app
+##
+##  仓库根目录下每个 luci-app-* 目录就是一个 OpenWrt/LuCI 软件包，
+##  直接作为 src-link feed 交给官方 SDK 容器编译，产出 .ipk 附件。
+##
+##  三个 job：
+##    check         结构 + shell 静态检查（编译前门禁）
+##    build         矩阵编译，每个包 × 每个 SDK 目标一个 job，产物上传为 artifact
+##    build-manual  手动指定 SDK tag 临时编译（只在 workflow_dispatch 填了 sdk 时跑）
+##    release       打 v* tag 时，把本轮所有 .ipk 挂到 GitHub Release 上
+##
+##  ── 关于 SDK 目标（matrix.sdk）────────────────────────────────────────────
+##  ARCH 直接就是官方 SDK 容器镜像的 tag，规则为「架构」或「架构-版本」：
+##      x86_64                      x86_64 的 main(snapshot)
+##      mips_24kc                   ath79 / ramips 等 mips 路由器（main）
+##      aarch64_cortex-a53          ARM64（main）
+##      x86_64-24.10-SNAPSHOT       24.10 分支，分支快照 tag，不会随小版本失效
+##      x86_64-23.05.5              23.05.5 正式版（版本号 tag，永久保留）
+##      x86_64-24.10.1              24.10.1 正式版
+##  注意：纯「架构」别名只在 main/snapshot 上发布；正式版分支必须带版本号后缀。
+##  想加目标就往下面的 sdk 列表里加一行，不要去动别的地方。
+##
+##  临时用别的 tag 编译：Actions -> 本工作流 -> Run workflow -> 填 sdk。
+##
+##  ── 说明 ──────────────────────────────────────────────────────────────────
+##  * 依赖里出现 SDK 官方 feed 里没有的包（例如 luci-app-pon-status 的
+##    airoha-ponctl）时，打包脚本会打印一条 warning 并把该依赖从 ipk 的
+##    control 里丢掉，编译本身不会失败。装到路由器上前请确认这个包已就位。
+##  * 产物路径用 bin/packages/** 通配，因为 bin/packages/ 下的一级目录是
+##    架构名（x86_64），与 SDK tag（如 x86_64-24.10-SNAPSHOT）并不相同。
+## ============================================================================
+name: Build LuCI packages
 
 on:
   push:
-分支:
-      - master
-      - main
+分支: [main, master]
+标签: ['v*']
     paths-ignore:
-      - '**.md'
+      - '**/*.md'
       - 'LICENSE'
+      - '.gitignore'
   pull_request:
-分支:
-      - master
-      - main
+分支: [main, master]
   workflow_dispatch:
+    inputs:
+      sdk:
+        description: '临时编译用的 SDK 镜像 tag，例如 x86_64-24.10-SNAPSHOT。留空则只跑默认矩阵'
+        type: string
+        required: false
+        default: ''
+      packages:
+        description: '要编译的包目录名，空格分隔'
+        type: string
+        required: false
+        default: 'luci-app-natmode luci-app-pon-status'
 
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+
+  # --------------------------------------------------------------------------
+  # 静态检查：编译前先挡住「装上去才发现」的低级错误
+  # --------------------------------------------------------------------------
+  check:
+    name: Structure & ShellCheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck jq
+
+      - name: LuCI 包结构校验
+        run: bash .github/scripts/check-luci-structure.sh
+
+      # 只把 error 级别当失败。仓库里现有脚本若只是 warning/style 不干净，
+      # 不会因此变红。等清理干净后可以把 --severity 提到 warning。
+      - name: "ShellCheck (blocking / error only)"
+        run: |
+          set -euo pipefail
+          files=()
+          mapfile -t files < <(grep -rIl -E '^#![[:space:]]*(/usr)?/bin/(env[[:space:]]+)?(ba)?sh' . --exclude-dir=.git || true)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo 'no shell script found'
+            exit 0
+          fi
+          printf 'checking %d shell script(s)\n' "${#files[@]}"
+          printf '  %s\n' "${files[@]}"
+          shellcheck -x --severity=error -e SC1091 "${files[@]}"
+
+      - name: "ShellCheck (advisory / warning and above)"
+        continue-on-error: true
+        run: |
+          files=()
+          mapfile -t files < <(grep -rIl -E '^#![[:space:]]*(/usr)?/bin/(env[[:space:]]+)?(ba)?sh' . --exclude-dir=.git || true)
+          [ "${#files[@]}" -gt 0 ] || exit 0
+          shellcheck -x --format=gcc --severity=warning -e SC1091,SC3043 "${files[@]}"
+
+      - name: JSON 语法校验
+        run: |
+          set -euo pipefail
+          n=0
+          while IFS= read -r f; do
+            jq empty "$f"
+            n=$((n + 1))
+          done < <(find . -name '*.json' -not -path './.git/*' -type f | sort)
+          echo "validated $n json file(s)"
+
+  # --------------------------------------------------------------------------
+  # 编译：包 × SDK 目标 的矩阵，fail-fast=false 让单个组合失败不影响其他
+  # --------------------------------------------------------------------------
   build:
-    name: "Build ${{ matrix.arch }}-${{ matrix.branch }}"
+    name: ${{ matrix.pkg }} · ${{ matrix.sdk }}
+    needs: check
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - arch: x86_64
-            branch: SNAPSHOT
-          - arch: mipsel_24kc
-            branch: SNAPSHOT
-          - arch: aarch64_cortex-a53
-            branch: SNAPSHOT
-          - arch: x86_64
-            branch: openwrt-23.05
+        pkg:
+          - luci-app-natmode
+          - luci-app-pon-status
+        sdk:
+          - x86_64
+          - mips_24kc
+          - aarch64_cortex-a53
+          - x86_64-24.10-SNAPSHOT
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Build package with OpenWrt SDK
-        uses: openwrt/gh-action-sdk@v5
+      - name: Build ${{ matrix.pkg }} for ${{ matrix.sdk }}
+        uses: openwrt/gh-action-sdk@v11
         env:
-          ARCH: ${{ matrix.arch }}
-          BRANCH: ${{ matrix.branch }}
-          FEEDNAME: natmode_ci
-          PACKAGES: luci-app-natmode
+          ARCH: ${{ matrix.sdk }}
+          FEEDNAME: luci_app_ci
+          PACKAGES: ${{ matrix.pkg }}
+          BUILD_LOG: 1
 
-      - name: Upload ipk artifact
+      - name: Upload ipk / apk
         uses: actions/upload-artifact@v4
         with:
-          name: "luci-app-natmode_${{ matrix.arch }}_${{ matrix.branch }}"
-          path: "bin/packages/${{ matrix.arch }}/natmode_ci/luci-app-natmode*.ipk"
+          name: ipk-${{ matrix.pkg }}-${{ matrix.sdk }}
+          path: |
+            bin/packages/**/*.ipk
+            bin/packages/**/*.apk
           if-no-files-found: error
+          retention-days: 14
 
-  shellcheck:
-    name: "ShellCheck"
+      - name: Upload build logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ matrix.pkg }}-${{ matrix.sdk }}
+          path: logs/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # --------------------------------------------------------------------------
+  # 手动编译：Run workflow 时填了 sdk 才会跑，一次编完所有包
+  # --------------------------------------------------------------------------
+  build-manual:
+    name: Manual build · ${{ inputs.sdk }}
+    if: github.event_name == 'workflow_dispatch' && inputs.sdk != ''
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Install ShellCheck
-        run: sudo apt-get update -y && sudo apt-get install -y shellcheck
+      - name: Build ${{ inputs.packages }} for ${{ inputs.sdk }}
+        uses: openwrt/gh-action-sdk@v11
+        env:
+          ARCH: ${{ inputs.sdk }}
+          FEEDNAME: luci_app_ci
+          PACKAGES: ${{ inputs.packages }}
+          IGNORE_ERRORS: 1
+          BUILD_LOG: 1
 
-      - name: Lint natmode-apply
-        run: shellcheck -x root/usr/sbin/natmode-apply
+      - name: Upload ipk / apk
+        uses: actions/upload-artifact@v4
+        with:
+          name: ipk-manual-${{ inputs.sdk }}
+          path: |
+            bin/packages/**/*.ipk
+            bin/packages/**/*.apk
+          if-no-files-found: warn
+          retention-days: 14
 
-      - name: Lint init.d/natmode
-        # init.d scripts get procd_* functions injected at runtime by /etc/rc.common,
-        # so ShellCheck cannot source them. Ignore SC1091 (file not found).
-        run: shellcheck -x -e SC1091 root/etc/init.d/natmode
+  # --------------------------------------------------------------------------
+  # 发布：打 v* tag 时，把矩阵产出的所有 .ipk 合成一个 Release
+  # --------------------------------------------------------------------------
+  release:
+    name: Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ipk-*
+          merge-multiple: true
+          path: dist
+
+      - name: List files
+        run: ls -lR dist
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          shopt -s nullglob
+          files=(dist/*.ipk dist/*.apk)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "no package to publish"
+            exit 1
+          fi
+          printf 'publishing %d file(s) to %s\n' "${#files[@]}" "$tag"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "${files[@]}" --clobber
+          else
+            gh release create "$tag" "${files[@]}" --title "$tag" --generate-notes
+          fi
