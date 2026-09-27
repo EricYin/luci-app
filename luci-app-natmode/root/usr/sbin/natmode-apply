@@ -4,7 +4,9 @@
 # natmode-apply —— 应用 / 查询当前 NAT 模式
 #
 # 用法：
-#   natmode-apply apply      应用 /etc/config/natmode 里配置的模式
+#   natmode-apply apply [mode] [fullcone6] [auto_offload]
+#                            应用模式；LuCI 保存时显式传参（见 do_apply 注释），
+#                            开机/init.d 路径不传参、读 UCI 现值
 #   natmode-apply reapply    只重建 nft 层规则（不写 firewall UCI），
 #                            供 firewall 重载后调用（init.d 的 reload 触发）
 #   natmode-apply status     输出当前状态；同时做两件事：
@@ -288,10 +290,49 @@ do_sync() {
 }
 
 # ─────────────────────────────────────────────────────────────
-# apply：按 natmode.main.mode 真正落地（natmode → firewall 方向）
+# apply：按模式真正落地（natmode → firewall 方向）
+#
+# 用法：
+#   natmode-apply apply                                  开机/init.d 用：读 UCI 现值
+#   natmode-apply apply <mode> [<fullcone6>] [<auto_offload>]
+#       LuCI 页面保存时用：mode ∈ fullcone|restricted|symmetric，
+#       fullcone6 / auto_offload ∈ 0|1，与页面上点选的值一致。
+#
+# 为什么必须传参（实测踩坑，别删）：
+#   LuCI 的 UCI 改动经 rpcd 暂存，要等 ui.changes.apply() 才提交；
+#   而本脚本在提交【之前】运行，CLI uci 读不到暂存值 ——
+#   apply 若依赖读 UCI 获取新模式，拿到的是上一次的旧值
+#   （实测：选 NAT3 应用后实际应用的仍是 fullcone，随后 commit 落地
+#   restricted，又被 do_sync 以「firewall 仍是 fullcone=1」强制改回，
+#   表现为「怎么点都不生效」）。
+#   传参后本脚本成为唯一权威写入方：先把 mode/开关写进 UCI 并提交
+#   （幂等，与 rpcd 之后的同值提交不冲突），再落地 firewall。
 # ─────────────────────────────────────────────────────────────
 do_apply() {
+	local want="$1" want6="$2" wantoff="$3"
 	local mode
+
+	case "$want" in
+		fullcone|restricted|symmetric)
+			uci set "$CONF_MODE"="$want" 2>/dev/null
+			;;
+		'')
+			: # 开机路径：不传参，用 UCI 现值
+			;;
+		*)
+			log "警告：忽略未知模式参数 '$want'，使用 UCI 现值"
+			;;
+	esac
+	case "$want6" in
+		0|1) uci set "$CONF_FULLCONE6"="$want6" 2>/dev/null ;;
+	esac
+	case "$wantoff" in
+		0|1) uci set "$CONF_OFFLOAD"="$wantoff" 2>/dev/null ;;
+	esac
+	# 有无参数改动都提交一次：顺带把暂存的同名改动冲掉，保证下方
+	# get_mode / get_flag 读到的是刚写入的权威值
+	uci commit natmode 2>/dev/null
+
 	mode="$(get_mode)"
 
 	case "$mode" in
@@ -424,14 +465,16 @@ do_status() {
 }
 
 case "$1" in
-	apply)   do_apply ;;
+	apply)   shift; do_apply "$@" ;;
 	reapply) do_reapply ;;
 	status)  do_status ;;
 	sync)    do_sync ;;
 	cleanup) nft_random_del ;;
 	*)
 		echo "用法: natmode-apply [apply|reapply|status|sync|cleanup]"
-		echo "  apply    本页 → 防火墙：按 natmode.main.mode 落地"
+		echo "  apply    本页 → 防火墙：按模式落地"
+		echo "           apply <mode> [<fullcone6>] [<auto_offload>]"
+		echo "           LuCI 保存时显式传参（rpcd 暂存值 CLI 读不到，见 do_apply 注释）"
 		echo "  reapply  防火墙重载后：同步 UCI + 重建 nft 规则"
 		echo "  status   输出状态，并做自愈与反向同步"
 		echo "  sync     防火墙 → 本页：把实际生效模式写回 natmode.main.mode"

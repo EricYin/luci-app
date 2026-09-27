@@ -207,24 +207,38 @@ return view.extend({
 
 		// 保存后真正应用。
 		//
-		// 顺序（踩过两次坑，这里说明为什么是这三步）：
+		// 顺序（为什么必须是「apply(带参) → commit → reapply」）：
 		//
-		//   1) apply     —— 必须【先】执行。
-		//      若先做 ui.changes.apply()，它触发的 firewall reload 会回调
-		//      init.d/natmode 的 reapply → do_sync。此时 firewall.fullcone
-		//      还是旧值（1），do_sync 会把刚选的 symmetric 改回 fullcone，
-		//      表现就是「插件里改不了 NAT 类型」。
+		//   1) apply —— 带上本页点选的值作为显式参数，必须【先】执行。
+		//      本页的 UCI 改动经 rpcd 暂存，要等第 2 步才提交；而 CLI uci
+		//      读不到 rpcd 的暂存值 —— natmode-apply 若靠读 UCI 拿新模式，
+		//      拿到的是旧值（实测：选 NAT3 应用后仍是 NAT1，随后 commit
+		//      落地 restricted 又被 do_sync 强制改回 fullcone）。
+		//      所以在 save 之前先把表单值抓下来传给脚本，由脚本统一
+		//      写 UCI（幂等）+ firewall 并落地，成为唯一权威写入方。
+		//      若先做 ui.changes.apply()，firewall reload 会回调
+		//      init.d/natmode 的 reapply → do_sync，此时 firewall.fullcone
+		//      还是旧值（1），do_sync 会把刚选的模式改回 fullcone。
 		//
-		//   2) ui.changes.apply() —— 提交 UCI 改动并触发 firewall reload。
-		//      fw4 重建 ruleset，会冲掉第 1 步插入的 nft 随机端口规则。
+		//   2) ui.changes.apply() —— 提交 rpcd 暂存的 UCI 改动并触发
+		//      firewall reload。因第 1 步已把两边写成一致，这里的同值
+		//      提交是幂等的，fw4 重建 ruleset 也不会打架。
 		//
-		//   3) reapply   —— 兜底。按 natmode.main.mode 重建 nft 规则。
-		//      do_sync 现在只处理无歧义情况，不会误改 mode，所以这一步安全。
+		//   3) reapply —— 兜底。按一致的 UCI 状态重建 nft 规则。
 		m.handleSaveApply = function(ev) {
 			var self = this;
+			// 必须在 save 之前抓：save 后表单值进 rpcd 暂存，脚本读不到
+			var wantMode = o.formvalue('main') || 'fullcone';
+			var want6    = o6.formvalue('main') || '0';
+			var wantOff  = oc.formvalue('main') || '1';
+
 			return self.handleSave(ev).then(function() {
-				return fs.exec('/usr/sbin/natmode-apply', ['apply']);
-			}).then(function() {
+				return fs.exec('/usr/sbin/natmode-apply',
+					['apply', wantMode, want6, wantOff]);
+			}).then(function(res) {
+				if (res && typeof res.code === 'number' && res.code !== 0)
+					throw new Error((res.stderr || res.stdout ||
+						'natmode-apply 退出码 ' + res.code).trim());
 				return ui.changes.apply();
 			}).then(function() {
 				return fs.exec('/usr/sbin/natmode-apply', ['reapply']);
