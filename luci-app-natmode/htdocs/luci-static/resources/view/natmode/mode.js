@@ -73,12 +73,7 @@ function pageCss() {
 		'.natmode-page .cbi-checkbox.nat-check{display:flex;align-items:center;margin:.2rem 0;padding:.55rem .75rem;border:1px solid var(--lighter);border-radius:.55rem;background:var(--white);cursor:pointer}',
 		'.natmode-page .nat-check-title{flex:1 1 auto;font-weight:500;line-height:1.5}',
 		'.natmode-page .nat-check input[type="checkbox"]{flex:0 0 auto;width:1.15rem !important;height:1.15rem !important;margin:0 0 0 .6rem}',
-		// 状态表：窄屏单行一条，左标签右取值
-		'.natmode-page .table{display:block}',
-		'.natmode-page .nat-status .tr{display:flex;align-items:baseline;padding:.45rem .2rem;border-bottom:1px solid var(--lighter)}',
-		'.natmode-page .nat-status .tr:last-child{border-bottom:0}',
-		'.natmode-page .nat-status .td{flex:1 1 auto;display:block;width:auto;padding:0;line-height:1.5;text-align:left;word-break:break-word}',
-		'.natmode-page .nat-status .td:first-child{flex:0 0 38%;opacity:.65;font-size:.82rem}',
+		// 状态表：完全保持主题默认渲染（用户指定不动），不再注入任何规则
 		// 应用按钮：通栏大按钮，手机好点
 		'.natmode-page .cbi-page-actions{padding:.4rem 0 0}',
 		'.natmode-page .cbi-page-actions .cbi-button{width:100%;padding:.75rem 1rem;font-size:1rem;border-radius:.55rem}'
@@ -226,7 +221,7 @@ function renderStatus(st) {
 		warn.push(E('p', {}, _('未找到 fw4 的 srcnat_<zone> 链：'
 			+ 'WAN 区域可能未启用 MASQUERADE，随机端口规则无处可插。')));
 
-	var table = E('table', { 'class': 'table nat-status' });
+	var table = E('table', { 'class': 'table' });
 	for (var i = 0; i < rows.length; i += 2) {
 		table.appendChild(E('tr', { 'class': 'tr' }, [
 			E('td', { 'class': 'td left', 'width': '33%' }, [ rows[i] ]),
