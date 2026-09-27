@@ -9,7 +9,9 @@
 ##  两个 job（并行）：
 ##    check    结构 + shell 静态检查
 ##    build    无 SDK 打包所有 luci-app-*，产物为 noarch apk，任何 25.12 设备通用
-##    release  打 v* tag 时，把本轮所有 .apk 挂到 GitHub Release 上
+##    release  构建成功即发布 apk 到 Releases：
+##             - push 到 main → 滚动更新 `snapshot` Release（prerelease，始终最新）
+##             - 打 v* tag   → 以 tag 名建正式 Release
 ##
 ##  ── 安装说明 ────────────────────────────────────────────────────────────────
 ##  产物未签名，设备上安装：
@@ -132,11 +134,14 @@ jobs:
           retention-days: 14
 
   # --------------------------------------------------------------------------
-  # 发布：打 v* tag 时，把本轮所有 .apk 合成一个 Release
+  # 发布：构建成功就把 .apk 发到 Releases
+  #   * push 到 main   → 滚动 Release `snapshot`（prerelease，每次整建重建，
+  #                      始终对应当前 main；用户直接到 Releases 页下载即可）
+  #   * 打 v* tag      → 以 tag 名建正式 Release
   # --------------------------------------------------------------------------
   release:
     name: Release
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -155,18 +160,33 @@ jobs:
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          tag="$GITHUB_REF_NAME"
           shopt -s nullglob
           files=(dist/*.apk)
           if [ "${#files[@]}" -eq 0 ]; then
             echo "no package to publish"
             exit 1
           fi
-          printf 'publishing %d file(s) to %s\n' "${#files[@]}" "$tag"
-          if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" "${files[@]}" --clobber
+
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            tag="$GITHUB_REF_NAME"
+            title="$tag"
+            extra=(--generate-notes)
           else
-            gh release create "$tag" "${files[@]}" --title "$tag" --generate-notes
+            tag="snapshot"
+            title="snapshot（最新构建 · OpenWrt 25.12 noarch）"
+            notes="$(printf 'main 分支自动构建，每次推送整建重建，始终为最新版本。\n\n安装：\n    apk add --allow-untrusted ./luci-app-xxx-<version>.apk')"
+            extra=(--prerelease --notes "$notes")
+
+            # 滚动发布：删除旧 snapshot（连同 tag）后整建，避免遗留被改名/删除的旧文件
+            if gh release view "$tag" -R "$REPO" >/dev/null 2>&1; then
+              gh release delete "$tag" -R "$REPO" --cleanup-tag --yes
+            elif git ls-remote --tags origin "refs/tags/$tag" | grep -q .; then
+              git push origin ":refs/tags/$tag"
+            fi
           fi
+
+          printf 'publishing %d file(s) to %s\n' "${#files[@]}" "$tag"
+          gh release create "$tag" "${files[@]}" -R "$REPO" --title "$title" "${extra[@]}"
