@@ -48,9 +48,14 @@ var prevNet = {};
 /* 探测后固定的取数来源：'ubus' 或 'sysfs' */
 var statsSource = null;
 
-/* 连接数 helper（精确路径 exec，ACL 不涉通配）：数 /proc/net/nf_conntrack
- * 里的 TCP/UDP 条目及 [HW_OFFLOAD] 子集。必须走 helper —— 该文件是
- * st_size 为 0 的伪文件，rpcd 的 file.read 只读得回前 4 KiB。 */
+/* 连接数 helper：数 /proc/net/nf_conntrack 里的 TCP/UDP 条目及 [HW_OFFLOAD]
+ * 子集。必须走 helper —— 该文件是 st_size 为 0 的伪文件，rpcd 的 file.read
+ * 只读得回前 4 KiB。
+ * 注意是「经 /bin/sh 调起」而不是直接 exec：rpcd 的 file.exec 要求目标有
+ * 可执行位，而这个位在「Windows zip 打包 -> 各种解压/拷贝」的链路上反复
+ * 丢失（0.4.1 的 Build/Prepare chmod 和 postinst chmod 在部分 SDK/固件上
+ * 都不生效）。sh 读脚本内容不要求脚本本身可执行，ACL 用带参数的精确
+ * 匹配 "/bin/sh /usr/sbin/ponstat-conn" 只放行这一条命令。 */
 var CONNSTAT = '/usr/sbin/ponstat-conn';
 
 var callDeviceStatus = rpc.declare({
@@ -147,7 +152,7 @@ function netRate(from, to) {
 
 /* 连接数：一次 helper exec 拿 TCP/UDP 总数与硬件卸载子集，不可用 -> null */
 function readConns() {
-	return L.resolveDefault(fs.exec(CONNSTAT), null).then(function(res) {
+	return L.resolveDefault(fs.exec('/bin/sh', [ CONNSTAT ]), null).then(function(res) {
 		var vals = {},
 		    lines = ((res && res.stdout) || '').split('\n'),
 		    i, m;
