@@ -12,13 +12,15 @@ STOP=90
 
 USE_PROCD=1
 
-# WAN 可能晚于本服务上线：后台幂等重试，直到规则真正生效
+# WAN 可能晚于本服务上线：后台幂等重试，直到规则真正生效。
+# 15 次 x 4s = 60s，覆盖较慢的 PPPoE 拨号；更晚的事件由下面的
+# interface raw trigger 兜底。
 bootstrap_rules() {
 	(
 		i=0
-		while [ "$i" -lt 10 ]; do
+		while [ "$i" -lt 15 ]; do
 			i=$((i + 1))
-			sleep 3
+			sleep 4
 			[ "$(uci -q get natmode.main.mode 2>/dev/null)" = "symmetric" ] || break
 			/usr/sbin/natmode-apply reapply >/dev/null 2>&1
 			r="$(/usr/sbin/natmode-apply status 2>/dev/null |
@@ -54,4 +56,11 @@ stop_service() {
 service_triggers() {
 	procd_add_reload_trigger firewall
 	procd_add_reload_trigger natmode
+
+	# 关键：WAN 上线（尤其 PPPoE）伴随 fw4 整表重建，开机注入的
+	# fully-random 规则会被抹掉 —— 这正是「每次重启打开页面都提示
+	# 已自动修复」的根源（此前只有打开页面时的 status 自愈能救场）。
+	# 这里用 raw trigger 在任意接口事件后延迟 5 秒重跑 reapply，确保
+	# 排在 fw4 自己的重载之后；短时间内的多个接口事件由 procd 合并。
+	procd_add_raw_trigger "interface.*" 5000 /etc/init.d/natmode reload
 }

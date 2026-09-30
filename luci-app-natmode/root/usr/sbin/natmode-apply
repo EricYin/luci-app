@@ -6,8 +6,25 @@ CONF_MODE="natmode.main.mode"
 CONF_OFFLOAD="natmode.main.auto_offload"
 CONF_FULLCONE6="natmode.main.fullcone6"
 
+# 上次观测到的规则在位情况。/var/run 是 tmpfs，开机即空 —— 这正是区分
+# 「开机首次注入」和「运行中丢失后修复」的依据：开机后第一次把规则建起来
+# 属于正常启动流程，不该在页面上弹「已自动修复」。
+# （STATE 可被环境变量覆盖，仅供测试钩子使用，设备上不受影响。）
+STATE="${NATMODE_STATE:-/var/run/natmode.state}"
+
 log() {
 	logger -t natmode "$@"
+}
+
+# 读状态：规则此前在位返回 0，否则返回 1
+state_had_rules() {
+	[ -f "$STATE" ] || return 1
+	grep -q '^rules=1$' "$STATE" 2>/dev/null
+}
+
+state_set_rules() {  # state_set_rules <0|1>
+	mkdir -p "$(dirname "$STATE")" 2>/dev/null
+	printf 'rules=%s\n' "$1" > "$STATE" 2>/dev/null
 }
 
 # apk 运行时安装不会建 rc.d 软链，开机可能从没跑过本服务 → 幂等补 enable，
@@ -230,8 +247,10 @@ do_apply() {
 
 	if [ "$mode" = "symmetric" ]; then
 		nft_random_add >/dev/null
+		[ "$(nft_random_count)" != "0" ] && state_set_rules 1
 	else
 		nft_random_del
+		state_set_rules 0
 	fi
 
 	log "NAT 模式已应用（本页 → 防火墙）：$mode"
@@ -239,22 +258,39 @@ do_apply() {
 }
 
 do_reapply() {
-	local mode fc
+	local mode fc i=0
+	local rand
 
 	do_sync >/dev/null 2>&1
 	mode="$(get_mode)"
 	fc="$(uci -q get firewall.@defaults[0].fullcone 2>/dev/null)"
 
 	if [ "$mode" = "symmetric" ] && [ "${fc:-0}" != "1" ]; then
-		nft_random_add >/dev/null
-		log "firewall 重载后已重建 NAT4 随机端口规则"
+		# 本命令通常在 fw4 重载前后被并发调用（接口事件触发器、reload
+		# trigger）：插入后校验，没插上就稍等重试，把和 fw4 重载的竞态
+		# 收敛掉。nft_random_add 对已含 fully-random 的链会跳过，幂等。
+		while [ "$i" -lt 5 ]; do
+			nft_random_add >/dev/null
+			rand="$(nft_random_count)"
+			[ "${rand:-0}" != "0" ] && break
+			i=$((i + 1))
+			sleep 2
+		done
+
+		if [ "${rand:-0}" != "0" ]; then
+			state_set_rules 1
+			log "firewall 重载后已重建 NAT4 随机端口规则"
+		else
+			log "警告：NAT4 随机端口规则重建失败（srcnat 链可能尚未生成）"
+		fi
 	else
 		nft_random_del
+		state_set_rules 0
 	fi
 }
 
 do_status() {
-	local mode fc effective rand chains synced=0 healed=0
+	local mode fc effective rand chains synced=0 healed=0 pre_had=0
 	ensure_enabled
 	mode="$(get_mode)"
 	fc="$(uci -q get firewall.@defaults[0].fullcone 2>/dev/null)"
@@ -263,12 +299,24 @@ do_status() {
 	chains="${chains:-0}"
 	rand="$(nft_random_count)"
 
+	# 本次观测之前，规则是否曾在位？（开机后状态文件为空 -> 没在位过）
+	state_had_rules && pre_had=1
+
 	if [ "$mode" = "symmetric" ] && [ "$fc" != "1" ] && [ "${rand:-0}" = "0" ] \
 	   && [ "${chains:-0}" != "0" ]; then
 		nft_random_add >/dev/null
 		rand="$(nft_random_count)"
-		healed=1
-		log "自愈：NAT4 随机端口规则已重新注入"
+
+		if [ "${rand:-0}" != "0" ]; then
+			if [ "$pre_had" = "1" ]; then
+				# 运行中规则被清掉又重建 —— 这才是真正的「修复」
+				healed=1
+				log "自愈：NAT4 随机端口规则已重新注入（此前被防火墙重载清除）"
+			else
+				# 开机后首次建立：正常启动流程，不算故障，不上报
+				log "开机注入：NAT4 随机端口规则已建立（正常启动流程）"
+			fi
+		fi
 	fi
 
 	effective="$(do_sync)"
@@ -281,16 +329,26 @@ do_status() {
 	   && [ "${chains:-0}" != "0" ] && [ "$healed" = "0" ]; then
 		nft_random_add >/dev/null
 		rand="$(nft_random_count)"
-		healed=1
-		log "自愈（同步后）：NAT4 随机端口规则已重新注入"
+
+		if [ "${rand:-0}" != "0" ]; then
+			if [ "$pre_had" = "1" ]; then
+				healed=1
+				log "自愈（同步后）：NAT4 随机端口规则已重新注入（此前被防火墙重载清除）"
+			else
+				log "开机注入：NAT4 随机端口规则已建立（正常启动流程）"
+			fi
+		fi
 	fi
 
 	if [ "$effective" != "symmetric" ] && [ "${rand:-0}" != "0" ]; then
 		nft_random_del
 		rand="$(nft_random_count)"
-		healed=1
+		healed=2
 		log "自愈：清理残留随机端口规则（当前为 $effective，不应存在）"
 	fi
+
+	# 记录本次观测，供下次区分「开机注入」与「运行中修复」
+	[ "${rand:-0}" != "0" ] && state_set_rules 1 || state_set_rules 0
 
 	fw_mode="restricted"
 	[ "$fc" = "1" ] && fw_mode="fullcone"

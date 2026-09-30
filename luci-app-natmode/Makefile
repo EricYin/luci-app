@@ -5,7 +5,7 @@ include $(TOPDIR)/rules.mk
 LUCI_TITLE:=LuCI NAT mode selector (Full Cone / Restricted / Symmetric)
 LUCI_URL:=https://github.com/pbs05/ponwrt
 LUCI_DEPENDS:=+luci-base +firewall4 +kmod-nft-fullcone
-PKG_VERSION:=0.1.4
+PKG_VERSION:=0.1.5
 PKG_RELEASE:=1
 
 PKG_LICENSE:=Apache-2.0
