@@ -149,8 +149,14 @@ function renderStatus(st) {
 			+ '改动过 FullCone 开关，本页已按实际生效状态更新为 ')
 			+ modeLabel(st.effective) + _('。')));
 
+	/* healed=1：运行中规则被防火墙重载清掉后又重建 —— 真正的「修复」。
+	 * healed=2：清掉了非 NAT4 模式下的残留规则。
+	 * 开机后首次注入不算修复（helper 用 /var/run 状态区分），不再弹提示。 */
 	if (st.healed === '1')
 		notice.push(E('p', {}, _('已自动修复：NAT4 的随机端口规则此前被防火墙重载清除，现已重新注入。')));
+
+	if (st.healed === '2')
+		notice.push(E('p', {}, _('已自动清理：检测到当前模式下的残留随机端口规则，已清除。')));
 
 	if (st.effective !== 'symmetric' && st.random_rules !== '0')
 		warn.push(E('p', {}, _('检测到残留的随机端口规则 ')
