@@ -6,33 +6,7 @@
 'require fs';
 'require uci';
 
-/*
- * PON 光模块 + 端口速率，Status -> Overview 的一个 include 块。
- *
- * 光模块读数（收发光功率 / 温度 / 偏置电流 / 供电电压）来自
- * `/usr/sbin/ponctl status --json` 的 frontend 段，沿用本包原有的实现。
- *
- * 端口速率自己采：/sys/class/net/<device>/statistics/{rx,tx}_bytes 相邻两次
- * 采样的差值除以实际经过的时间，单位 Mibit/s（1024*1024 bit/s）。口径与
- * luci-app-zn515xg-hw 的「Pon 端口速率」卡一致（上行取 tx、下行取 rx，
- * 上行在上、下行在下），差别只在取值方式：那个包必须借 helper 脚本 exec，
- * 因为它的连接数数据源 /proc/net/nf_conntrack 是 st_size 为 0 的伪文件、
- * rpcd 的 file.read 只读得回前 4 KiB；sysfs 的 statistics 属性是普通文件，
- * 一次 file.read 就能拿全，所以这里直接读、每次轮询省掉一次 exec。
- *
- * 采样点按 device 分开存（一台机器可能有多个 xpon 段）。第一次渲染时没有
- * 历史采样，就隔 500 ms 再采一次，让首屏就有读数而不是一整轮 pollinterval
- * 的空档；之后每次轮询直接用上次的采样，不再多采。
- *
- * 计数回绕 / 接口重启会让差值变成负数，那种情况直接判定为无效读数
- * （返回 null），不显示一个假的尖峰。
- *
- * 读这些 sysfs 属性的权限由
- * /usr/share/rpcd/acl.d/luci-app-pon-status.json 授予（注意要 file 的
- * *read* 而不仅是 exec —— 本包原来只 exec ponctl）。
- */
 
-/* device -> 上一次 { rx, tx, t(ms) } */
 var prevNet = {};
 
 function readFrontend(device) {
@@ -55,7 +29,6 @@ function readFrontend(device) {
 	});
 }
 
-/* 一次采样：读 rx/tx 字节计数。接口不存在（或名字不对）时返回 null */
 function sampleNet(device) {
 	var base = '/sys/class/net/' + device + '/statistics';
 
@@ -72,7 +45,6 @@ function sampleNet(device) {
 	});
 }
 
-/* 计数回绕 / 接口重启会算出巨大的假速率，那种情况返回 null */
 function netRate(from, to) {
 	var dt = (to.t - from.t) / 1000.0;
 
@@ -85,11 +57,10 @@ function netRate(from, to) {
 	};
 }
 
-/* { rx, tx }，单位 Mibit/s；读不到就 null */
 function readRate(device) {
 	return sampleNet(device).then(function(cur) {
 		if (cur == null) {
-			/* 这个设备名下没有 statistics —— 以后也采不到，别留着旧采样 */
+
 			delete prevNet[device];
 			return null;
 		}
@@ -105,7 +76,6 @@ function readRate(device) {
 				return r;
 		}
 
-		/* 首次渲染（或上一次采样已失效）：补一次短间隔采样 */
 		return new Promise(function(resolve) {
 			window.setTimeout(function() {
 				sampleNet(device).then(function(cur2) {
@@ -131,7 +101,6 @@ function metric(frontend, field, unit, digits) {
 	return Number(frontend[field]).toFixed(digits) + ' ' + unit;
 }
 
-/* 主题变量 + 字面兜底（兜底值取 luCI 亮色主题的实际定义） */
 function css(name, fallback) {
 	return 'var(--' + name + ', ' + fallback + ')';
 }
@@ -163,7 +132,6 @@ function buildRate(rate) {
 	if (!rate)
 		return E('div', { 'style': S_EMPTY }, [ _('不可用') ]);
 
-	/* 相邻两次渲染相隔 L.env.pollinterval 秒，所以读数是一段时间内的平均 */
 	var window = (+L.env.pollinterval) || 5;
 
 	return E('div', {}, [
