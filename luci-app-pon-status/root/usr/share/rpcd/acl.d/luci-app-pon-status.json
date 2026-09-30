@@ -10,6 +10,7 @@
 			"file": {
 				"/usr/sbin/ponctl status --json": [ "exec" ],
 				"/usr/sbin/ponctl --device * status --json": [ "exec" ],
+				"/bin/sh /usr/sbin/ponstat-conn": [ "exec" ],
 				"/usr/sbin/ponstat-conn": [ "exec" ],
 				"/sys/class/net/*/statistics/rx_bytes": [ "read" ],
 				"/sys/class/net/*/statistics/tx_bytes": [ "read" ]
