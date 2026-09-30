@@ -3,7 +3,8 @@
 		"description": "Grant access to PON optical status and port rate for the overview page",
 		"read": {
 			"ubus": {
-				"file": [ "read", "exec" ]
+				"file": [ "read", "exec" ],
+				"network.device": [ "status" ]
 			},
 			"uci": [ "pon" ],
 			"file": {

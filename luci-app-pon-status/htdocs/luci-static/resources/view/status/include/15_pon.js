@@ -4,6 +4,7 @@
 'use strict';
 'require baseclass';
 'require fs';
+'require rpc';
 'require uci';
 
 /*
@@ -12,28 +13,42 @@
  * 光模块读数（收发光功率 / 温度 / 偏置电流 / 供电电压）来自
  * `/usr/sbin/ponctl status --json` 的 frontend 段，沿用本包原有的实现。
  *
- * 端口速率自己采：/sys/class/net/<device>/statistics/{rx,tx}_bytes 相邻两次
- * 采样的差值除以实际经过的时间，单位 Mibit/s（1024*1024 bit/s）。口径与
- * luci-app-zn515xg-hw 的「Pon 端口速率」卡一致（上行取 tx、下行取 rx，
- * 上行在上、下行在下），差别只在取值方式：那个包必须借 helper 脚本 exec，
- * 因为它的连接数数据源 /proc/net/nf_conntrack 是 st_size 为 0 的伪文件、
- * rpcd 的 file.read 只读得回前 4 KiB；sysfs 的 statistics 属性是普通文件，
- * 一次 file.read 就能拿全，所以这里直接读、每次轮询省掉一次 exec。
+ * 端口速率自己采：相邻两次采样的 {rx,tx}_bytes 差值除以实际经过的时间，
+ * 单位 Mibit/s（1024*1024 bit/s）。口径与 luci-app-zn515xg-hw 的
+ * 「Pon 端口速率」卡一致（上行取 tx、下行取 rx，上行在上、下行在下）。
  *
- * 采样点按 device 分开存（一台机器可能有多个 xpon 段）。第一次渲染时没有
- * 历史采样，就隔 500 ms 再采一次，让首屏就有读数而不是一整轮 pollinterval
- * 的空档；之后每次轮询直接用上次的采样，不再多采。
+ * 数据源按优先级：
  *
- * 计数回绕 / 接口重启会让差值变成负数，那种情况直接判定为无效读数
+ *   1) ubus `network.device status` —— LuCI 接口状态页本来就在用的调用，
+ *      由 luci-base 的 luci-base-network-status ACL 组授权，返回值里每个
+ *      设备名下都带 statistics（含 rx_bytes/tx_bytes）。pon0 在 sysfs 里
+ *      是个符号链接，rpcd 的 file.read ACL 匹配走的是解析后的真实路径，
+ *      "net/*" 这种通配根本批不下来（在 ponwrt 上实测：
+ *      设备上的 ACL 文件正确、rpcd 已重启、重新登录，cat 能读，
+ *      LuCI 里 file.read 仍被拒），所以 sysfs 直读只能当备胎。
+ *
+ *   2) sysfs /sys/class/net/<device>/statistics/{rx,tx}_bytes 直读
+ *      （本包 ACL 授权）。只有在 ubus 那边拿不到该设备统计时才用它。
+ *
+ * 第一次成功的来源会被记住（statsSource），之后的轮询不再重复探测。
+ *
+ * 采样点按 device 分开存。第一次渲染时没有历史采样，就隔 500 ms 再采
+ * 一次，让首屏就有读数；之后每次轮询直接用上次的采样。
+ *
+ * 计数回绕 / 接口重启会让差值变成负数，那种情况判定为无效读数
  * （返回 null），不显示一个假的尖峰。
- *
- * 读这些 sysfs 属性的权限由
- * /usr/share/rpcd/acl.d/luci-app-pon-status.json 授予（注意要 file 的
- * *read* 而不仅是 exec —— 本包原来只 exec ponctl）。
  */
 
 /* device -> 上一次 { rx, tx, t(ms) } */
 var prevNet = {};
+
+/* 探测后固定的取数来源：'ubus' 或 'sysfs' */
+var statsSource = null;
+
+var callDeviceStatus = rpc.declare({
+	object: 'network.device',
+	method: 'status'
+});
 
 function readFrontend(device) {
 	var args = (device != null && device !== '')
@@ -55,8 +70,8 @@ function readFrontend(device) {
 	});
 }
 
-/* 一次采样：读 rx/tx 字节计数。接口不存在（或名字不对）时返回 null */
-function sampleNet(device) {
+/* 备用：sysfs 直读一次采样。接口不存在 / ACL 被拒时返回 null */
+function sampleSysfs(device) {
 	var base = '/sys/class/net/' + device + '/statistics';
 
 	return Promise.all([
@@ -69,6 +84,43 @@ function sampleNet(device) {
 			return null;
 
 		return { rx: rx, tx: tx, t: Date.now() };
+	});
+}
+
+/* 主：ubus network.device status。调用失败或没有该设备的统计 -> null */
+function sampleUbus(device) {
+	return L.resolveDefault(callDeviceStatus(), null).then(function(res) {
+		var dev = (L.isObject(res) && L.isObject(res[device]))
+			? res[device] : null;
+		var st = (dev != null && L.isObject(dev.statistics))
+			? dev.statistics : null;
+		var rx = (st != null) ? parseInt(st.rx_bytes) : NaN;
+		var tx = (st != null) ? parseInt(st.tx_bytes) : NaN;
+
+		if (isNaN(rx) || isNaN(tx))
+			return null;
+
+		return { rx: rx, tx: tx, t: Date.now() };
+	});
+}
+
+/* 一次采样：先 ubus，拿不到该设备统计时退回 sysfs；都不行 -> null */
+function sampleNet(device) {
+	if (statsSource == 'sysfs')
+		return sampleSysfs(device);
+
+	return sampleUbus(device).then(function(cur) {
+		if (cur != null) {
+			statsSource = 'ubus';
+			return cur;
+		}
+
+		return sampleSysfs(device).then(function(cur2) {
+			if (cur2 != null)
+				statsSource = 'sysfs';
+
+			return cur2;
+		});
 	});
 }
 
@@ -163,7 +215,7 @@ function rateLine(label, value) {
 function buildRate(rate) {
 	if (rate && rate.error)
 		return E('div', { 'style': S_EMPTY },
-			[ _('读取失败（检查 ACL 与接口名，需重新登录）') ]);
+			[ _('读取失败（network.device status 与 sysfs 均不可用）') ]);
 
 	if (!rate)
 		return E('div', { 'style': S_EMPTY }, [ _('不可用') ]);
