@@ -16,7 +16,7 @@
  * 端口速率自己采：相邻两次采样的 {rx,tx}_bytes 差值除以实际经过的时间，
  * 单位 Mibit/s（1024*1024 bit/s）。口径与 luci-app-zn515xg-hw 的
  * 「Pon 端口速率」卡一致（上行取 tx、下行取 rx）。上行/下行两行显示在
- * 光模块 itemlist 右侧的空白区（卡片右上角）。
+ * 光模块 itemlist 右侧的空白区（卡片右上角、垂直居中）。
  *
  * 连接数（TCP/UDP 总数 + [HW_OFFLOAD] 硬件卸载子集）由 helper 脚本给出，
  * 显示在 itemlist 下方的分隔线下一行。
@@ -240,8 +240,9 @@ var cCool   = css('success-color-high', 'rgb(0, 172, 89)');
 var S_RATE_BLOCK = 'margin-top: 8px; padding-top: 8px; border-top: 1px solid ' + cBorder;
 /* 上部一行两列：左边光模块 itemlist（标签窄、右侧留白），右边就是
  * 上行/下行两行速率 —— 正好填进 itemlist 的空白区。
+ * align-items: center 让速率列相对左侧 itemlist 垂直居中（而不是顶在上面）。
  * 所有文字 nowrap，禁止窄屏逐字竖排断行。 */
-var S_TOP        = 'display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; min-width: 0';
+var S_TOP        = 'display: flex; align-items: center; justify-content: space-between; gap: 10px; min-width: 0';
 var S_RATE_COL   = 'flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; align-items: flex-end';
 var S_RATE_ROW   = 'display: flex; align-items: baseline; gap: 5px; white-space: nowrap';
 var S_RATE_LABEL = 'font-size: 12px; color: ' + cMuted + '; white-space: nowrap';
@@ -274,7 +275,7 @@ function connCell(label, c) {
 	]);
 }
 
-/* 右上角速率列：上行/下行两行；读不到就给个简短占位（长文案放不下） */
+/* 右侧速率列：上行/下行两行，整列在卡片里垂直居中；读不到就给个简短占位 */
 function buildRateCol(rate) {
 	if (rate && !rate.error)
 		return E('div', { 'style': S_RATE_COL }, [
