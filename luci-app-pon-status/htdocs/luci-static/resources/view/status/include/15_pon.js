@@ -238,7 +238,7 @@ var S_RATE_BLOCK = 'margin-top: 8px; padding-top: 8px; border-top: 1px solid ' +
  * 左列两个标注分别与上下行两行对齐；右列是连接数。
  * 窄屏（手机）要点：所有文字节点 nowrap，禁止逐字竖排断行；列间距收紧；
  * 数值字号略降，保证三列在 360px 宽度内放得下。 */
-var S_GRID       = 'display: grid; grid-template-columns: auto auto auto; gap: 8px 12px; align-items: center; justify-content: space-between; min-width: 0';
+var S_GRID       = 'display: grid; grid-template-columns: auto auto auto; gap: 8px 8px; align-items: center; justify-content: space-between; min-width: 0';
 var S_POS_TITLE  = 'grid-column: 1; grid-row: 1';
 var S_POS_NOTE   = 'grid-column: 1; grid-row: 2';
 var S_POS_RATE   = 'grid-column: 2; grid-row: 1 / 3; display: flex; flex-direction: column; gap: 8px; min-width: 0';
@@ -248,13 +248,14 @@ var S_POS_SPAN   = 'grid-column: 3; grid-row: 1 / 3';
 var S_RATE_TITLE = 'font-size: 12px; color: ' + cMuted + '; white-space: nowrap';
 /* 「N 秒平均」刻意比「端口速率」小一号 */
 var S_NOTE       = 'font-size: 10px; color: ' + cMuted + '; white-space: nowrap';
-var S_RATE_ROW   = 'display: flex; align-items: baseline; justify-content: space-between; gap: 6px; min-width: 0';
+var S_RATE_ROW   = 'display: flex; align-items: baseline; justify-content: space-between; gap: 5px; min-width: 0';
 var S_RATE_LABEL = 'font-size: 12px; color: ' + cMuted + '; white-space: nowrap';
 var S_RATE_VALUE = 'font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; color: ' + cStrong + '; white-space: nowrap';
-var S_RATE_UNIT  = 'font-size: 11px; color: ' + cMuted + '; margin-left: 2px; white-space: nowrap';
+var S_RATE_UNIT  = 'font-size: 10px; color: ' + cMuted + '; margin-left: 2px; white-space: nowrap';
 var S_EMPTY      = 'font-size: 13px; color: ' + cMuted;
-/* 连接数行：协议标签 + 总数 + 硬件卸载计数（绿色，好消息的颜色） */
-var S_CONN_ROW   = 'display: flex; align-items: baseline; gap: 4px; min-width: 0';
+/* 连接数行：协议标签 + 总数 + 硬件卸载计数（绿色，好消息的颜色）。
+ * 「硬件卸载」在窄屏下写成「卸载」——整行要和速率行挤在同一行宽里。 */
+var S_CONN_ROW   = 'display: flex; align-items: baseline; gap: 3px; min-width: 0';
 var S_CONN_LABEL = 'font-size: 11px; font-weight: 600; color: ' + cMuted + '; white-space: nowrap';
 var S_CONN_VALUE = 'font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; color: ' + cStrong + '; white-space: nowrap';
 var S_CONN_NPU   = 'font-size: 10px; color: ' + cMuted + '; white-space: nowrap';
@@ -275,7 +276,7 @@ function connCell(label, c, pos) {
 	return E('div', { 'style': S_CONN_ROW + '; ' + pos }, [
 		E('span', { 'style': S_CONN_LABEL }, [ label ]),
 		E('span', { 'style': S_CONN_VALUE }, [ String(c.total) ]),
-		E('span', { 'style': S_CONN_NPU }, [ _('硬件卸载') ]),
+		E('span', { 'style': S_CONN_NPU }, [ _('卸载') ]),
 		E('span', { 'style': S_CONN_NPU_V }, [ String(c.npu) ])
 	]);
 }
