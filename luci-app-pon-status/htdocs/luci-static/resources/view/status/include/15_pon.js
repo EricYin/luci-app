@@ -229,38 +229,36 @@ function css(name, fallback) {
 var cBorder = css('border-color-low', '#eeeeee');
 var cMuted  = css('text-color-medium', '#808080');
 var cStrong = css('text-color-highest', '#000000');
-
-var cBorder = css('border-color-low', '#eeeeee');
-var cMuted  = css('text-color-medium', '#808080');
-var cStrong = css('text-color-highest', '#000000');
 var cCool   = css('success-color-high', 'rgb(0, 172, 89)');
 
 var S_RATE_BLOCK = 'margin-top: 8px; padding-top: 8px; border-top: 1px solid ' + cBorder;
 /* 一行三列的网格：
  *   (1,1) 端口速率   (1,2) 上行行   (1,3) TCP 行
  *   (2,1) N 秒平均   (2,2) 下行行   (2,3) UDP 行
- * 左列两个标注分别与上下行两行对齐；右列是连接数。 */
-var S_GRID       = 'display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 6px 14px; align-items: center; min-width: 0';
+ * 左列两个标注分别与上下行两行对齐；右列是连接数。
+ * 窄屏（手机）要点：所有文字节点 nowrap，禁止逐字竖排断行；列间距收紧；
+ * 数值字号略降，保证三列在 360px 宽度内放得下。 */
+var S_GRID       = 'display: grid; grid-template-columns: auto auto auto; gap: 8px 12px; align-items: center; justify-content: space-between; min-width: 0';
 var S_POS_TITLE  = 'grid-column: 1; grid-row: 1';
 var S_POS_NOTE   = 'grid-column: 1; grid-row: 2';
-var S_POS_RATE   = 'grid-column: 2; grid-row: 1 / 3; display: flex; flex-direction: column; gap: 6px; min-width: 0';
+var S_POS_RATE   = 'grid-column: 2; grid-row: 1 / 3; display: flex; flex-direction: column; gap: 8px; min-width: 0';
 var S_POS_TCP    = 'grid-column: 3; grid-row: 1';
 var S_POS_UDP    = 'grid-column: 3; grid-row: 2';
 var S_POS_SPAN   = 'grid-column: 3; grid-row: 1 / 3';
-var S_RATE_TITLE = 'font-size: 12px; color: ' + cMuted;
+var S_RATE_TITLE = 'font-size: 12px; color: ' + cMuted + '; white-space: nowrap';
 /* 「N 秒平均」刻意比「端口速率」小一号 */
-var S_NOTE       = 'font-size: 10px; color: ' + cMuted;
-var S_RATE_ROW   = 'display: flex; align-items: baseline; justify-content: space-between; gap: 8px';
-var S_RATE_LABEL = 'font-size: 12px; color: ' + cMuted;
-var S_RATE_VALUE = 'font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; color: ' + cStrong;
-var S_RATE_UNIT  = 'font-size: 11px; color: ' + cMuted + '; margin-left: 3px';
+var S_NOTE       = 'font-size: 10px; color: ' + cMuted + '; white-space: nowrap';
+var S_RATE_ROW   = 'display: flex; align-items: baseline; justify-content: space-between; gap: 6px; min-width: 0';
+var S_RATE_LABEL = 'font-size: 12px; color: ' + cMuted + '; white-space: nowrap';
+var S_RATE_VALUE = 'font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; color: ' + cStrong + '; white-space: nowrap';
+var S_RATE_UNIT  = 'font-size: 11px; color: ' + cMuted + '; margin-left: 2px; white-space: nowrap';
 var S_EMPTY      = 'font-size: 13px; color: ' + cMuted;
 /* 连接数行：协议标签 + 总数 + 硬件卸载计数（绿色，好消息的颜色） */
-var S_CONN_ROW   = 'display: flex; align-items: baseline; gap: 5px; min-width: 0';
-var S_CONN_LABEL = 'font-size: 11px; color: ' + cMuted + '; min-width: 2.6em';
-var S_CONN_VALUE = 'font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; color: ' + cStrong;
-var S_CONN_NPU   = 'font-size: 11px; color: ' + cMuted;
-var S_CONN_NPU_V = 'font-size: 13px; font-weight: 600; color: ' + cCool;
+var S_CONN_ROW   = 'display: flex; align-items: baseline; gap: 4px; min-width: 0';
+var S_CONN_LABEL = 'font-size: 11px; font-weight: 600; color: ' + cMuted + '; white-space: nowrap';
+var S_CONN_VALUE = 'font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; color: ' + cStrong + '; white-space: nowrap';
+var S_CONN_NPU   = 'font-size: 10px; color: ' + cMuted + '; white-space: nowrap';
+var S_CONN_NPU_V = 'font-size: 12px; font-weight: 600; color: ' + cCool + '; white-space: nowrap';
 
 function rateLine(label, value) {
 	return E('div', { 'style': S_RATE_ROW }, [
@@ -294,8 +292,8 @@ function buildRateCells(rate, conns, window) {
 
 	if (rate && !rate.error)
 		cells.push(E('div', { 'style': S_POS_RATE }, [
-			rateLine(_('上行速率'), rate.tx),
-			rateLine(_('下行速率'), rate.rx)
+			rateLine(_('上行'), rate.tx),
+			rateLine(_('下行'), rate.rx)
 		]));
 	else
 		cells.push(E('div', { 'style': S_EMPTY + '; ' + S_POS_RATE },

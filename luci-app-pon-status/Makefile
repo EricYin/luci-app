@@ -5,7 +5,7 @@ include $(TOPDIR)/rules.mk
 LUCI_TITLE:=LuCI PON optics, port rate and connection counters (overview card)
 LUCI_URL:=https://github.com/pbs05/openwrt-pon-userspace
 LUCI_DEPENDS:=+luci-base +luci-mod-status +airoha-ponctl +jsonfilter +rpcd-mod-file
-PKG_VERSION:=0.4.1
+PKG_VERSION:=0.4.2
 PKG_RELEASE:=1
 
 PKG_LICENSE:=Apache-2.0
