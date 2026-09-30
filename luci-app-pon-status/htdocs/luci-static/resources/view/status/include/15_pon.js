@@ -15,10 +15,11 @@
  *
  * 端口速率自己采：相邻两次采样的 {rx,tx}_bytes 差值除以实际经过的时间，
  * 单位 Mibit/s（1024*1024 bit/s）。口径与 luci-app-zn515xg-hw 的
- * 「Pon 端口速率」卡一致（上行取 tx、下行取 rx，上行在上、下行在下）。
+ * 「Pon 端口速率」卡一致（上行取 tx、下行取 rx）。上行/下行两行显示在
+ * 光模块 itemlist 右侧的空白区（卡片右上角）。
  *
- * 连接数（TCP/UDP 总数 + [HW_OFFLOAD] 硬件卸载子集）由 helper 脚本
- * /usr/sbin/ponstat-conn 一次 exec 给出，布局在速率行的右侧。
+ * 连接数（TCP/UDP 总数 + [HW_OFFLOAD] 硬件卸载子集）由 helper 脚本给出，
+ * 显示在 itemlist 下方的分隔线下一行。
  *
  * 数据源按优先级：
  *
@@ -237,30 +238,19 @@ var cStrong = css('text-color-highest', '#000000');
 var cCool   = css('success-color-high', 'rgb(0, 172, 89)');
 
 var S_RATE_BLOCK = 'margin-top: 8px; padding-top: 8px; border-top: 1px solid ' + cBorder;
-/* 一行三列的网格：
- *   (1,1) 端口速率   (1,2) 上行行   (1,3) TCP 行
- *   (2,1) N 秒平均   (2,2) 下行行   (2,3) UDP 行
- * 左列两个标注分别与上下行两行对齐；右列是连接数。
- * 窄屏（手机）要点：所有文字节点 nowrap，禁止逐字竖排断行；列间距收紧；
- * 数值字号略降，保证三列在 360px 宽度内放得下。 */
-var S_GRID       = 'display: grid; grid-template-columns: auto auto auto; gap: 8px 8px; align-items: center; justify-content: space-between; min-width: 0';
-var S_POS_TITLE  = 'grid-column: 1; grid-row: 1';
-var S_POS_NOTE   = 'grid-column: 1; grid-row: 2';
-var S_POS_RATE   = 'grid-column: 2; grid-row: 1 / 3; display: flex; flex-direction: column; gap: 8px; min-width: 0';
-var S_POS_TCP    = 'grid-column: 3; grid-row: 1';
-var S_POS_UDP    = 'grid-column: 3; grid-row: 2';
-var S_POS_SPAN   = 'grid-column: 3; grid-row: 1 / 3';
-var S_RATE_TITLE = 'font-size: 12px; color: ' + cMuted + '; white-space: nowrap';
-/* 「N 秒平均」刻意比「端口速率」小一号 */
-var S_NOTE       = 'font-size: 10px; color: ' + cMuted + '; white-space: nowrap';
-var S_RATE_ROW   = 'display: flex; align-items: baseline; justify-content: space-between; gap: 5px; min-width: 0';
+/* 上部一行两列：左边光模块 itemlist（标签窄、右侧留白），右边就是
+ * 上行/下行两行速率 —— 正好填进 itemlist 的空白区。
+ * 所有文字 nowrap，禁止窄屏逐字竖排断行。 */
+var S_TOP        = 'display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; min-width: 0';
+var S_RATE_COL   = 'flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; align-items: flex-end';
+var S_RATE_ROW   = 'display: flex; align-items: baseline; gap: 5px; white-space: nowrap';
 var S_RATE_LABEL = 'font-size: 12px; color: ' + cMuted + '; white-space: nowrap';
 var S_RATE_VALUE = 'font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; color: ' + cStrong + '; white-space: nowrap';
 var S_RATE_UNIT  = 'font-size: 10px; color: ' + cMuted + '; margin-left: 2px; white-space: nowrap';
-var S_EMPTY      = 'font-size: 13px; color: ' + cMuted;
+var S_EMPTY      = 'font-size: 13px; color: ' + cMuted + '; white-space: nowrap';
 /* 连接数行：协议标签 + 总数 + 硬件卸载计数（绿色，好消息的颜色）。
- * 「硬件卸载」在窄屏下写成「卸载」——整行要和速率行挤在同一行宽里。 */
-var S_CONN_ROW   = 'display: flex; align-items: baseline; gap: 3px; min-width: 0';
+ * TCP/UDP 两组并排一行，宽度不够时允许换行。 */
+var S_CONN_ROW   = 'display: flex; align-items: baseline; gap: 3px; white-space: nowrap';
 var S_CONN_LABEL = 'font-size: 11px; font-weight: 600; color: ' + cMuted + '; white-space: nowrap';
 var S_CONN_VALUE = 'font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; color: ' + cStrong + '; white-space: nowrap';
 var S_CONN_NPU   = 'font-size: 10px; color: ' + cMuted + '; white-space: nowrap';
@@ -269,16 +259,14 @@ var S_CONN_NPU_V = 'font-size: 12px; font-weight: 600; color: ' + cCool + '; whi
 function rateLine(label, value) {
 	return E('div', { 'style': S_RATE_ROW }, [
 		E('span', { 'style': S_RATE_LABEL }, [ label ]),
-		E('span', {}, [
-			E('span', { 'style': S_RATE_VALUE }, [ value.toFixed(2) ]),
-			E('span', { 'style': S_RATE_UNIT }, [ 'Mibit/s' ])
-		])
+		E('span', { 'style': S_RATE_VALUE }, [ value.toFixed(2) ]),
+		E('span', { 'style': S_RATE_UNIT }, [ 'Mibit/s' ])
 	]);
 }
 
-function connCell(label, c, pos) {
+function connCell(label, c) {
 	/* 不给 E() 传 null 子节点（旧版 LuCI 不跳过 null），这里全部非空 */
-	return E('div', { 'style': S_CONN_ROW + '; ' + pos }, [
+	return E('div', { 'style': S_CONN_ROW }, [
 		E('span', { 'style': S_CONN_LABEL }, [ label ]),
 		E('span', { 'style': S_CONN_VALUE }, [ String(c.total) ]),
 		E('span', { 'style': S_CONN_NPU }, [ _('卸载') ]),
@@ -286,61 +274,55 @@ function connCell(label, c, pos) {
 	]);
 }
 
-function buildRateCells(rate, conns, window) {
-	var cells = [];
-
-	cells.push(E('span', { 'style': S_RATE_TITLE + '; ' + S_POS_TITLE },
-		[ _('端口速率') ]));
-
+/* 右上角速率列：上行/下行两行；读不到就给个简短占位（长文案放不下） */
+function buildRateCol(rate) {
 	if (rate && !rate.error)
-		cells.push(E('span', { 'style': S_NOTE + '; ' + S_POS_NOTE },
-			[ window + ' 秒平均' ]));
-
-	if (rate && !rate.error)
-		cells.push(E('div', { 'style': S_POS_RATE }, [
+		return E('div', { 'style': S_RATE_COL }, [
 			rateLine(_('上行'), rate.tx),
 			rateLine(_('下行'), rate.rx)
-		]));
-	else
-		cells.push(E('div', { 'style': S_EMPTY + '; ' + S_POS_RATE },
-			[ rate ? _('读取失败（network.device status 与 sysfs 均不可用）')
-			       : _('不可用') ]));
+		]);
+
+	return E('div', { 'style': S_EMPTY },
+		[ rate ? _('读取失败') : _('不可用') ]);
+}
+
+/* 底部分隔线下的一行：TCP / UDP 两组并排，宽度不够时换行 */
+function buildConnRow(conns) {
+	var cells = [];
 
 	if (conns && (conns.tcp || conns.udp)) {
 		if (conns.tcp)
-			cells.push(connCell('TCP', conns.tcp, S_POS_TCP));
+			cells.push(connCell('TCP', conns.tcp));
 
 		if (conns.udp)
-			cells.push(connCell('UDP', conns.udp, S_POS_UDP));
-	}
-	else {
-		cells.push(E('div', { 'style': S_EMPTY + '; ' + S_POS_SPAN },
-			[ _('连接数不可用') ]));
+			cells.push(connCell('UDP', conns.udp));
+
+		return E('div', {
+			'style': 'display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap'
+		}, cells);
 	}
 
-	return cells;
+	return E('div', { 'style': S_EMPTY }, [ _('连接数不可用') ]);
 }
 
 function renderBox(item) {
 	var frontend = item.frontend || {};
 
-	/* 读数是一段时间内的平均，窗口 = 轮询间隔 */
-	var window = (+L.env.pollinterval) || 5;
-
 	return E('div', { 'class': 'ifacebox' }, [
 		E('div', { 'class': 'ifacebox-head center active' },
 			E('strong', item.device)),
 		E('div', { 'class': 'ifacebox-body left' }, [
-			L.itemlist(E('span'), [
-				_('收光功率'), metric(frontend, 'rx_power_dbm', 'dBm', 2),
-				_('发光功率'), metric(frontend, 'tx_power_dbm', 'dBm', 2),
-				_('光模块温度'), metric(frontend, 'temperature_celsius', '°C', 2),
-				_('偏置电流'), metric(frontend, 'tx_bias_ma', 'mA', 2),
-				_('供电电压'), metric(frontend, 'voltage_volts', 'V', 4)
+			E('div', { 'style': S_TOP }, [
+				L.itemlist(E('span'), [
+					_('收光功率'), metric(frontend, 'rx_power_dbm', 'dBm', 2),
+					_('发光功率'), metric(frontend, 'tx_power_dbm', 'dBm', 2),
+					_('光模块温度'), metric(frontend, 'temperature_celsius', '°C', 2),
+					_('偏置电流'), metric(frontend, 'tx_bias_ma', 'mA', 2),
+					_('供电电压'), metric(frontend, 'voltage_volts', 'V', 4)
+				]),
+				buildRateCol(item.rate)
 			]),
-			E('div', { 'style': S_RATE_BLOCK },
-				E('div', { 'style': S_GRID },
-					buildRateCells(item.rate, item.conns, window)))
+			E('div', { 'style': S_RATE_BLOCK }, buildConnRow(item.conns))
 		])
 	]);
 }
