@@ -1,0 +1,37 @@
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+#
+# ponstat-conn —— luci-app-pon-status 概览页「连接数」数据源
+#
+# 被 LuCI 通过 rpcd 的 file.exec 调用，往 stdout 输出 key=value 行：
+#
+#   tcp_total=<nf_conntrack 里 tcp 条目数>    tcp_npu=<其中 [HW_OFFLOAD] 条目数>
+#   udp_total=<nf_conntrack 里 udp 条目数>    udp_npu=<其中 [HW_OFFLOAD] 条目数>
+#
+# "total" 不分 IPv4/IPv6 一起数，"npu" 只数被硬件卸载接管的子集（Airoha PPE
+# 注册成 flowtable 硬件卸载设备后，被卸载的条目带 [HW_OFFLOAD] 标记）。
+# 其余协议（icmp、gre、……）不数。
+#
+# 为什么需要 helper：/proc/net/nf_conntrack 是 st_size 为 0 的伪文件，
+# rpcd 的 file.read 对这种文件只返回前 4 KiB，数不完整个表 —— 与
+# luci-app-zn515xg-hw 的 515xg-connstat 同理。exec 权限由本包
+# /usr/share/rpcd/acl.d/luci-app-pon-status.json 按**精确路径**授予
+# （精确路径不涉及通配匹配，不会有 /sys/class/net 那种符号链接问题）。
+#
+# conntrack 不可读（模块没加载等）时什么都不输出，页面显示「不可用」，
+# 而不是显示一个假的 0。
+
+CT=/proc/net/nf_conntrack
+
+if [ -r "$CT" ]; then
+	set -- $(awk '
+		$3 == "tcp" { t++; if ($0 ~ /\[HW_OFFLOAD\]/) tn++ }
+		$3 == "udp" { u++; if ($0 ~ /\[HW_OFFLOAD\]/) un++ }
+		END { print t + 0, tn + 0, u + 0, un + 0 }
+	' "$CT" 2>/dev/null)
+
+	echo "tcp_total=${1:-0}"
+	echo "tcp_npu=${2:-0}"
+	echo "udp_total=${3:-0}"
+	echo "udp_npu=${4:-0}"
+fi

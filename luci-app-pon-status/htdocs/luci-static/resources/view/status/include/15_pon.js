@@ -17,6 +17,9 @@
  * 单位 Mibit/s（1024*1024 bit/s）。口径与 luci-app-zn515xg-hw 的
  * 「Pon 端口速率」卡一致（上行取 tx、下行取 rx，上行在上、下行在下）。
  *
+ * 连接数（TCP/UDP 总数 + [HW_OFFLOAD] 硬件卸载子集）由 helper 脚本
+ * /usr/sbin/ponstat-conn 一次 exec 给出，布局在速率行的右侧。
+ *
  * 数据源按优先级：
  *
  *   1) ubus `network.device status` —— LuCI 接口状态页本来就在用的调用，
@@ -44,6 +47,11 @@ var prevNet = {};
 
 /* 探测后固定的取数来源：'ubus' 或 'sysfs' */
 var statsSource = null;
+
+/* 连接数 helper（精确路径 exec，ACL 不涉通配）：数 /proc/net/nf_conntrack
+ * 里的 TCP/UDP 条目及 [HW_OFFLOAD] 子集。必须走 helper —— 该文件是
+ * st_size 为 0 的伪文件，rpcd 的 file.read 只读得回前 4 KiB。 */
+var CONNSTAT = '/usr/sbin/ponstat-conn';
 
 var callDeviceStatus = rpc.declare({
 	object: 'network.device',
@@ -137,6 +145,35 @@ function netRate(from, to) {
 	};
 }
 
+/* 连接数：一次 helper exec 拿 TCP/UDP 总数与硬件卸载子集，不可用 -> null */
+function readConns() {
+	return L.resolveDefault(fs.exec(CONNSTAT), null).then(function(res) {
+		var vals = {},
+		    lines = ((res && res.stdout) || '').split('\n'),
+		    i, m;
+
+		for (i = 0; i < lines.length; i++) {
+			m = lines[i].match(/^([a-z0-9_]+)=(\d+)$/);
+
+			if (m)
+				vals[m[1]] = parseInt(m[2]);
+		}
+
+		if (typeof(vals.tcp_total) != 'number' &&
+		    typeof(vals.udp_total) != 'number')
+			return null;
+
+		function pair(total, npu) {
+			return (typeof(total) == 'number')
+				? { total: total, npu: (typeof(npu) == 'number') ? npu : 0 }
+				: null;
+		}
+
+		return { tcp: pair(vals.tcp_total, vals.tcp_npu),
+		         udp: pair(vals.udp_total, vals.udp_npu) };
+	});
+}
+
 /* { rx, tx }，单位 Mibit/s；计数读不到 -> { error: true }（多半是 ACL 没生效
  * 或接口不存在），采样有效但差分无效（回绕/重启）-> null */
 function readRate(device) {
@@ -193,14 +230,37 @@ var cBorder = css('border-color-low', '#eeeeee');
 var cMuted  = css('text-color-medium', '#808080');
 var cStrong = css('text-color-highest', '#000000');
 
-var S_RATE_BLOCK  = 'margin-top: 8px; padding-top: 8px; border-top: 1px solid ' + cBorder;
-var S_RATE_TITLE  = 'font-size: 12px; color: ' + cMuted + '; margin-bottom: 4px';
-var S_RATE_ROW    = 'display: flex; align-items: baseline; justify-content: space-between; gap: 8px';
-var S_RATE_LABEL  = 'font-size: 12px; color: ' + cMuted;
-var S_RATE_VALUE  = 'font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; color: ' + cStrong;
-var S_RATE_UNIT   = 'font-size: 11px; color: ' + cMuted + '; margin-left: 3px';
-var S_NOTE        = 'font-size: 11px; color: ' + cMuted + '; margin-top: 4px';
-var S_EMPTY       = 'font-size: 13px; color: ' + cMuted;
+var cBorder = css('border-color-low', '#eeeeee');
+var cMuted  = css('text-color-medium', '#808080');
+var cStrong = css('text-color-highest', '#000000');
+var cCool   = css('success-color-high', 'rgb(0, 172, 89)');
+
+var S_RATE_BLOCK = 'margin-top: 8px; padding-top: 8px; border-top: 1px solid ' + cBorder;
+/* 一行三列的网格：
+ *   (1,1) 端口速率   (1,2) 上行行   (1,3) TCP 行
+ *   (2,1) N 秒平均   (2,2) 下行行   (2,3) UDP 行
+ * 左列两个标注分别与上下行两行对齐；右列是连接数。 */
+var S_GRID       = 'display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 6px 14px; align-items: center; min-width: 0';
+var S_POS_TITLE  = 'grid-column: 1; grid-row: 1';
+var S_POS_NOTE   = 'grid-column: 1; grid-row: 2';
+var S_POS_RATE   = 'grid-column: 2; grid-row: 1 / 3; display: flex; flex-direction: column; gap: 6px; min-width: 0';
+var S_POS_TCP    = 'grid-column: 3; grid-row: 1';
+var S_POS_UDP    = 'grid-column: 3; grid-row: 2';
+var S_POS_SPAN   = 'grid-column: 3; grid-row: 1 / 3';
+var S_RATE_TITLE = 'font-size: 12px; color: ' + cMuted;
+/* 「N 秒平均」刻意比「端口速率」小一号 */
+var S_NOTE       = 'font-size: 10px; color: ' + cMuted;
+var S_RATE_ROW   = 'display: flex; align-items: baseline; justify-content: space-between; gap: 8px';
+var S_RATE_LABEL = 'font-size: 12px; color: ' + cMuted;
+var S_RATE_VALUE = 'font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; color: ' + cStrong;
+var S_RATE_UNIT  = 'font-size: 11px; color: ' + cMuted + '; margin-left: 3px';
+var S_EMPTY      = 'font-size: 13px; color: ' + cMuted;
+/* 连接数行：协议标签 + 总数 + 硬件卸载计数（绿色，好消息的颜色） */
+var S_CONN_ROW   = 'display: flex; align-items: baseline; gap: 5px; min-width: 0';
+var S_CONN_LABEL = 'font-size: 11px; color: ' + cMuted + '; min-width: 2.6em';
+var S_CONN_VALUE = 'font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; color: ' + cStrong;
+var S_CONN_NPU   = 'font-size: 11px; color: ' + cMuted;
+var S_CONN_NPU_V = 'font-size: 13px; font-weight: 600; color: ' + cCool;
 
 function rateLine(label, value) {
 	return E('div', { 'style': S_RATE_ROW }, [
@@ -212,26 +272,56 @@ function rateLine(label, value) {
 	]);
 }
 
-function buildRate(rate) {
-	if (rate && rate.error)
-		return E('div', { 'style': S_EMPTY },
-			[ _('读取失败（network.device status 与 sysfs 均不可用）') ]);
-
-	if (!rate)
-		return E('div', { 'style': S_EMPTY }, [ _('不可用') ]);
-
-	/* 相邻两次渲染相隔 L.env.pollinterval 秒，所以读数是一段时间内的平均 */
-	var window = (+L.env.pollinterval) || 5;
-
-	return E('div', {}, [
-		rateLine(_('上行速率'), rate.tx),
-		rateLine(_('下行速率'), rate.rx),
-		E('div', { 'style': S_NOTE }, [ window + ' 秒平均' ])
+function connCell(label, c, pos) {
+	/* 不给 E() 传 null 子节点（旧版 LuCI 不跳过 null），这里全部非空 */
+	return E('div', { 'style': S_CONN_ROW + '; ' + pos }, [
+		E('span', { 'style': S_CONN_LABEL }, [ label ]),
+		E('span', { 'style': S_CONN_VALUE }, [ String(c.total) ]),
+		E('span', { 'style': S_CONN_NPU }, [ _('硬件卸载') ]),
+		E('span', { 'style': S_CONN_NPU_V }, [ String(c.npu) ])
 	]);
+}
+
+function buildRateCells(rate, conns, window) {
+	var cells = [];
+
+	cells.push(E('span', { 'style': S_RATE_TITLE + '; ' + S_POS_TITLE },
+		[ _('端口速率') ]));
+
+	if (rate && !rate.error)
+		cells.push(E('span', { 'style': S_NOTE + '; ' + S_POS_NOTE },
+			[ window + ' 秒平均' ]));
+
+	if (rate && !rate.error)
+		cells.push(E('div', { 'style': S_POS_RATE }, [
+			rateLine(_('上行速率'), rate.tx),
+			rateLine(_('下行速率'), rate.rx)
+		]));
+	else
+		cells.push(E('div', { 'style': S_EMPTY + '; ' + S_POS_RATE },
+			[ rate ? _('读取失败（network.device status 与 sysfs 均不可用）')
+			       : _('不可用') ]));
+
+	if (conns && (conns.tcp || conns.udp)) {
+		if (conns.tcp)
+			cells.push(connCell('TCP', conns.tcp, S_POS_TCP));
+
+		if (conns.udp)
+			cells.push(connCell('UDP', conns.udp, S_POS_UDP));
+	}
+	else {
+		cells.push(E('div', { 'style': S_EMPTY + '; ' + S_POS_SPAN },
+			[ _('连接数不可用') ]));
+	}
+
+	return cells;
 }
 
 function renderBox(item) {
 	var frontend = item.frontend || {};
+
+	/* 读数是一段时间内的平均，窗口 = 轮询间隔 */
+	var window = (+L.env.pollinterval) || 5;
 
 	return E('div', { 'class': 'ifacebox' }, [
 		E('div', { 'class': 'ifacebox-head center active' },
@@ -244,10 +334,9 @@ function renderBox(item) {
 				_('偏置电流'), metric(frontend, 'tx_bias_ma', 'mA', 2),
 				_('供电电压'), metric(frontend, 'voltage_volts', 'V', 4)
 			]),
-			E('div', { 'style': S_RATE_BLOCK }, [
-				E('div', { 'style': S_RATE_TITLE }, [ _('端口速率') ]),
-				buildRate(item.rate)
-			])
+			E('div', { 'style': S_RATE_BLOCK },
+				E('div', { 'style': S_GRID },
+					buildRateCells(item.rate, item.conns, window)))
 		])
 	]);
 }
@@ -264,18 +353,30 @@ return baseclass.extend({
 			if (!sections.length)
 				return Promise.reject();
 
-			return Promise.all(sections.map(function(section) {
-				return Promise.all([
-					readFrontend(section.device),
-					readRate(section.device)
-				]).then(function(res) {
-					return {
-						device: section.device,
-						frontend: res[0],
-						rate: res[1]
-					};
+			/* 连接数是整机数据，与具体光口无关，一次 exec 所有卡片共用 */
+			return Promise.all([
+				readConns(),
+				Promise.all(sections.map(function(section) {
+					return Promise.all([
+						readFrontend(section.device),
+						readRate(section.device)
+					]).then(function(res) {
+						return {
+							device: section.device,
+							frontend: res[0],
+							rate: res[1]
+						};
+					});
+				}))
+			]).then(function(res) {
+				var conns = res[0];
+
+				res[1].forEach(function(item) {
+					item.conns = conns;
 				});
-			}));
+
+				return res[1];
+			});
 		});
 	},
 
