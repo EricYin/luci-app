@@ -198,9 +198,29 @@ function renderStatus(st) {
 	return E('div', { 'class': 'cbi-section' }, children);
 }
 
+var APPLY = '/usr/sbin/natmode-apply';
+
+/* 调起 helper。
+ * rpcd 的 file.exec 要求目标文件带可执行位；固件预装时 postinst 不执行，
+ * 仓库里若是 0644 就会被 cp -pR 原样打进固件，直接执行得到退出码 127。
+ * 所以先走正常路径，失败再退化成 /bin/sh 解释执行兜底
+ * （helper 运行起来后会自己把可执行位补回来，下次就正常了）。
+ * 对应 ACL 里的 "/bin/sh /usr/sbin/natmode-apply *"。 */
+function callApply(args) {
+	return L.resolveDefault(fs.exec(APPLY, args), null)
+		.then(function(res) {
+			if (res && res.code === 0)
+				return res;
+			return L.resolveDefault(
+				fs.exec('/bin/sh', [APPLY].concat(args)), res);
+		});
+}
+
 return view.extend({
 	load: function() {
-		return L.resolveDefault(fs.exec_direct('/usr/sbin/natmode-apply', ['status']), '');
+		return callApply(['status']).then(function(res) {
+			return (res && res.stdout) ? res.stdout : '';
+		});
 	},
 
 	render: function(statusText) {
@@ -249,8 +269,7 @@ return view.extend({
 		}
 
 		function runApply(sel) {
-			return fs.exec('/usr/sbin/natmode-apply',
-				['apply', sel.mode, sel.fc6, sel.off])
+			return callApply(['apply', sel.mode, sel.fc6, sel.off])
 				.then(function(res) {
 					if (res && typeof res.code === 'number' && res.code !== 0)
 						throw new Error((res.stderr || res.stdout ||

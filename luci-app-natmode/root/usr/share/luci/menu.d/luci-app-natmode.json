@@ -7,10 +7,7 @@
 			"path": "natmode/mode"
 		},
 		"depends": {
-			"acl": [ "luci-app-natmode" ],
-			"fs": {
-				"/usr/sbin/natmode-apply": "executable"
-			}
+			"acl": [ "luci-app-natmode" ]
 		}
 	}
 }

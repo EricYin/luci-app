@@ -4,13 +4,15 @@
 		"read": {
 			"uci": [ "natmode", "firewall" ],
 			"file": {
-				"/usr/sbin/natmode-apply": [ "exec" ]
+				"/usr/sbin/natmode-apply": [ "exec" ],
+				"/bin/sh /usr/sbin/natmode-apply *": [ "exec" ]
 			}
 		},
 		"write": {
 			"uci": [ "natmode", "firewall" ],
 			"file": {
-				"/usr/sbin/natmode-apply": [ "exec" ]
+				"/usr/sbin/natmode-apply": [ "exec" ],
+				"/bin/sh /usr/sbin/natmode-apply *": [ "exec" ]
 			}
 		}
 	}

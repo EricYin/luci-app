@@ -16,6 +16,13 @@ log() {
 	logger -t natmode "$@"
 }
 
+# 自身可执行位丢失时顺手补回来。
+# 固件预装场景下 postinst 不执行，Makefile 的 Build/Prepare 补过一次；
+# 这里再兜一层，处理「手工拷贝进设备 / 权限被重置」的情况。失败（如 /usr
+# 只读）就静默跳过 —— 调用方已经退化成 /bin/sh 解释执行，功能不受影响。
+SELF=/usr/sbin/natmode-apply
+[ -x "$SELF" ] || chmod 0755 "$SELF" 2>/dev/null
+
 # 读状态：规则此前在位返回 0，否则返回 1
 state_had_rules() {
 	[ -f "$STATE" ] || return 1

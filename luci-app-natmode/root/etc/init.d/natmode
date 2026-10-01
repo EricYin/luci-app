@@ -12,6 +12,26 @@ STOP=90
 
 USE_PROCD=1
 
+# ── 调起 helper ────────────────────────────────────────────────────
+# 编译固件时预装的话 postinst 不会跑，仓库里若是 0644 就会原样进固件，
+# 没有 x 位时内核 exec 会直接拒绝（「Permission denied」），开机注入
+# 静默失败 —— 页面于是每次都显示「已自动修复」。
+# 所以：先尝试补权限，补不上（/usr 只读等）就退化成 /bin/sh 解释执行。
+APPLY_BIN=/usr/sbin/natmode-apply
+
+natmode_apply() {
+	if [ -x "$APPLY_BIN" ]; then
+		"$APPLY_BIN" "$@"
+	else
+		/bin/sh "$APPLY_BIN" "$@"
+	fi
+}
+
+# 开机第一件事：把 helper 的可执行位修回来，这样 rpcd file.exec 也能用。
+fix_perm() {
+	[ -x "$APPLY_BIN" ] || chmod 0755 "$APPLY_BIN" 2>/dev/null
+}
+
 # WAN 可能晚于本服务上线：后台幂等重试，直到规则真正生效。
 # 15 次 x 4s = 60s，覆盖较慢的 PPPoE 拨号；更晚的事件由下面的
 # interface raw trigger 兜底。
@@ -22,8 +42,8 @@ bootstrap_rules() {
 			i=$((i + 1))
 			sleep 4
 			[ "$(uci -q get natmode.main.mode 2>/dev/null)" = "symmetric" ] || break
-			/usr/sbin/natmode-apply reapply >/dev/null 2>&1
-			r="$(/usr/sbin/natmode-apply status 2>/dev/null |
+			natmode_apply reapply >/dev/null 2>&1
+			r="$(natmode_apply status 2>/dev/null |
 				sed -n 's/^random_rules=//p')"
 			[ -n "$r" ] && [ "$r" != "0" ] && break
 		done
@@ -40,16 +60,17 @@ start_service() {
 		logger -t natmode "已重建开机自启链接（此前未启用）"
 	fi
 
-	/usr/sbin/natmode-apply apply >/dev/null 2>&1
+	fix_perm
+	natmode_apply apply >/dev/null 2>&1
 	bootstrap_rules
 }
 
 reload_service() {
-	/usr/sbin/natmode-apply reapply >/dev/null 2>&1
+	natmode_apply reapply >/dev/null 2>&1
 }
 
 stop_service() {
-	/usr/sbin/natmode-apply cleanup >/dev/null 2>&1
+	natmode_apply cleanup >/dev/null 2>&1
 	return 0
 }
 

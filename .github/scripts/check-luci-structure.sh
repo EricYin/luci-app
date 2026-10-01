@@ -166,7 +166,14 @@ for d in "${pkgs[@]}"; do
 		if [ "$(mode_of "$f")" = "100755" ]; then
 			ok "可执行位 $f"
 		else
-			wrn "$f: 需要执行位但没有（git 里应为 100755），装到路由器上会 Permission denied"
+			# 必须是 FAIL 而不是 warn：没有执行位时 rpcd 的 file.exec 会直接
+			# 拒绝（页面报「退出码 127」），内核 exec 也拒绝（Permission
+			# denied），功能是彻底坏的，不是「可能有问题」。
+			# 另外 luci.mk 用 cp -pR 原样搬运权限，固件预装时 postinst 不执行，
+			# 仓库里的 100644 会一路带进固件，没有任何补救机会。
+			bad "$f: 缺少执行位（git 里应为 100755）。用"
+			info "       git update-index --chmod=+x $f"
+			info "       修正。装到路由器上会 Permission denied / rpcd 退出码 127"
 		fi
 	done < <(find "$p/root/usr/sbin" "$p/root/usr/bin" \
 	              "$p/root/etc/init.d" "$p/root/etc/uci-defaults" \
