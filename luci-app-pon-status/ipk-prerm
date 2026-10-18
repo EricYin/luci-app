@@ -1,0 +1,10 @@
+#!/bin/sh
+#
+# ipk 卸载前脚本（由 .github/scripts/build-ipk.sh 打包进 control.tar.gz）
+[ -n "${IPKG_INSTROOT}" ] || {
+	/usr/share/luci-app-pon-status/attach-card detach
+	rm -f /tmp/luci-indexcache.*
+	rm -rf /tmp/luci-modulecache/
+	exit 0
+}
+exit 0

@@ -10,3 +10,6 @@ luci-app-*/root/usr/bin/*          text eol=lf
 luci-app-*/root/etc/init.d/*       text eol=lf
 luci-app-*/root/etc/config/*       text eol=lf
 luci-app-*/root/etc/uci-defaults/* text eol=lf
+luci-app-*/root/usr/share/luci-app-*/* text eol=lf
+luci-app-*/ipk-postinst                 text eol=lf
+luci-app-*/ipk-prerm                    text eol=lf

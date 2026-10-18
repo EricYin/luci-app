@@ -1,0 +1,63 @@
+#!/bin/sh
+#
+# 把本包的概览页卡片（view.status.include.15_pon）挂进「状态 → 概览」。
+#
+# 背景：上游 LuCI 的 view/status/index.js 是运行时扫目录的
+#     fs.list('/www/luci-static/resources/view/status/include')
+# 所以正常情况下把 15_pon.js 丢进那个目录就会自动出现，什么都不用做。
+#
+# 但部分固件分支（例如 QWRT R26.x = OpenWrt 25.12 + 定制的 luci-mod-status）
+# 把这份列表写死成了 8 个模块名：
+#     view.status.include.10_system / 15_ports / 20_memory / 25_storage
+#     / 30_network / 40_dhcp / 50_dsl / 60_wifi
+# 这种 index.js 永远不会 require 我们的文件，卡片就不可能显示。
+#
+# 对策：幂等地把 'view.status.include.15_pon' 插进写死的数组。
+#   * 已注入 / 固件是动态扫描 → 直接跳过，什么都不做
+#   * 注入前备份到 index.js.bak-pon-status，注入失败立即还原
+#   * 卸载时 detach 用备份还原（没有备份就 sed 摘掉注入的那一项）
+#
+# 用法：attach-card attach|detach
+set -u
+
+F='/www/luci-static/resources/view/status/index.js'
+BAK="$F.bak-pon-status"
+MARK='include\.15_pon'
+ANCHOR='include\.15_ports'
+
+case "${1:-attach}" in
+attach)
+	if [ ! -f "$F" ]; then
+		echo "attach-card: $F not found, skip" >&2
+		exit 0
+	fi
+	if grep -q "$MARK" "$F" 2>/dev/null; then
+		exit 0
+	fi
+	if ! grep -q "$ANCHOR" "$F" 2>/dev/null; then
+		echo "attach-card: include 列表不是写死的（动态扫描），无需注入" >&2
+		exit 0
+	fi
+	[ -f "$BAK" ] || cp -a "$F" "$BAK"
+	sed -i "s/${ANCHOR}/include.15_pon','view.status.${ANCHOR}/" "$F"
+	if ! grep -q "$MARK" "$F" 2>/dev/null; then
+		cp -a "$BAK" "$F"
+		echo "attach-card: inject failed, restored" >&2
+		exit 1
+	fi
+	echo "attach-card: injected"
+	;;
+detach)
+	if [ -f "$BAK" ]; then
+		cp -a "$BAK" "$F"
+		rm -f "$BAK"
+	elif [ -f "$F" ]; then
+		sed -i "s/'view\.status\.include\.15_pon',//" "$F"
+	fi
+	;;
+*)
+	echo "usage: attach-card attach|detach" >&2
+	exit 1
+	;;
+esac
+exit 0

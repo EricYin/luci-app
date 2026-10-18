@@ -131,8 +131,15 @@ for mk in luci-app-*/Makefile; do
 		printf 'Description: %s\n' "$title"
 	} >"$cdir/control"
 
-	# ── postinst：清 LuCI 缓存 + reload rpcd（新装的 ACL 要 reload 才读得到）
-	cat >"$cdir/postinst" <<'EOS'
+	# ── 维护脚本 ────────────────────────────────────────────────────
+	# 包目录里若放了 ipk-postinst / ipk-prerm 就用它（安装到设备时才执行，
+	# IPKG_INSTROOT 非空表示在编固件、不执行）；否则用默认的 postinst：
+	# 清 LuCI 缓存 + reload rpcd（新装的 ACL 要 reload 才读得到）。
+	ctrl_files=(./control ./conffiles)
+	if [ -f "${pkg_dir}ipk-postinst" ]; then
+		cp "${pkg_dir}ipk-postinst" "$cdir/postinst"
+	else
+		cat >"$cdir/postinst" <<'EOS'
 #!/bin/sh
 [ -n "${IPKG_INSTROOT}" ] || {
 	rm -f /tmp/luci-indexcache.*
@@ -142,10 +149,18 @@ for mk in luci-app-*/Makefile; do
 }
 exit 0
 EOS
+	fi
+	ctrl_files+=(./postinst)
 	chmod 0755 "$cdir/postinst"
 
+	if [ -f "${pkg_dir}ipk-prerm" ]; then
+		cp "${pkg_dir}ipk-prerm" "$cdir/prerm"
+		ctrl_files+=(./prerm)
+		chmod 0755 "$cdir/prerm"
+	fi
+
 	tar -czf "$work/control.tar.gz" "${TAR_OPTS[@]}" --sort=name \
-		-C "$cdir" ./control ./conffiles ./postinst
+		-C "$cdir" "${ctrl_files[@]}"
 	tar -czf "$work/data.tar.gz" "${TAR_OPTS[@]}" --sort=name \
 		-C "$idir" .
 	printf '2.0\n' >"$work/debian-binary"
