@@ -5,12 +5,17 @@
 #
 # 被 LuCI 通过 rpcd 的 file.exec 调用，往 stdout 输出 key=value 行：
 #
-#   tcp_total=<nf_conntrack 里 tcp 条目数>    tcp_npu=<其中 [HW_OFFLOAD] 条目数>
-#   udp_total=<nf_conntrack 里 udp 条目数>    udp_npu=<其中 [HW_OFFLOAD] 条目数>
+#   tcp_total=<nf_conntrack 里 tcp 条目数>    tcp_npu=<其中 [HW_OFFLOAD]/[OFFLOAD] 条目数>
+#   udp_total=<nf_conntrack 里 udp 条目数>    udp_npu=<其中 [HW_OFFLOAD]/[OFFLOAD] 条目数>
 #
-# "total" 不分 IPv4/IPv6 一起数，"npu" 只数被硬件卸载接管的子集（Airoha PPE
-# 注册成 flowtable 硬件卸载设备后，被卸载的条目带 [HW_OFFLOAD] 标记）。
-# 其余协议（icmp、gre、……）不数。
+# "total" 不分 IPv4/IPv6 一起数，"npu" 只数被卸载接管的子集，其余协议
+# （icmp、gre、……）不数。
+#
+# 卸载标记的写法随内核版本不同（都在 nf_conntrack 条目的末尾）：
+#   kernel 5.4 及部分 BSP  → [OFFLOAD]      （flowtable 快路径接管）
+#   kernel 5.13+ 上游      → [HW_OFFLOAD]   （硬件卸载接管）
+# 兼容两者，名字里的 npu 只是历史叫法 —— 实际含义是「被 flowtable
+# （含 Airoha PPE 硬件卸载）接管、不再走 CPU 慢路径的连接」。
 #
 # 为什么需要 helper：/proc/net/nf_conntrack 是 st_size 为 0 的伪文件，
 # rpcd 的 file.read 对这种文件只返回前 4 KiB，数不完整个表 —— 与
@@ -25,8 +30,8 @@ CT=/proc/net/nf_conntrack
 
 if [ -r "$CT" ]; then
 	set -- $(awk '
-		$3 == "tcp" { t++; if ($0 ~ /\[HW_OFFLOAD\]/) tn++ }
-		$3 == "udp" { u++; if ($0 ~ /\[HW_OFFLOAD\]/) un++ }
+		$3 == "tcp" { t++; if ($0 ~ /\[(HW_)?OFFLOAD\]/) tn++ }
+		$3 == "udp" { u++; if ($0 ~ /\[(HW_)?OFFLOAD\]/) un++ }
 		END { print t + 0, tn + 0, u + 0, un + 0 }
 	' "$CT" 2>/dev/null)
 
