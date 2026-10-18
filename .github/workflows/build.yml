@@ -1,26 +1,30 @@
 ## ============================================================================
-##  Build LuCI packages  —  qwe3017/luci-app
+##  Build LuCI packages  —  qwe-qaq/luci-app
 ##
 ##  仓库根目录下每个 luci-app-* 目录就是一个 OpenWrt/LuCI 软件包。
-##  这些包是纯数据包（js/shell/json，无 C 代码），所以不走官方 SDK 容器：
-##  直接用 apk-tools 官方静态二进制的 `apk mkpkg` 组装 OpenWrt 25.12 的 apk 包
-##  （25.12 起包管理器已从 opkg/.ipk 切换为 apk/.apk）。全程无 docker，< 1 分钟。
 ##
-##  两个 job（并行）：
-##    check    结构 + shell 静态检查
-##    build    无 SDK 打包所有 luci-app-*，产物为 noarch apk，任何 25.12 设备通用
-##    release  构建成功即发布 apk 到 Releases：
-##             - push 到 main → 滚动更新 `snapshot` Release（prerelease，始终最新）
-##             - 打 v* tag   → 以 tag 名建正式 Release
+##  job 一览：
+##    check      结构 + shell 静态检查（编译前先挡住「装上去才发现」的错误）
+##    build      OpenWrt 25.12+ 的 apk 包。本仓库的包是纯数据包
+##               （js/shell/json，无 C 代码），不需要交叉编译器，所以不走 SDK：
+##               直接用 apk-tools 官方静态二进制 `apk mkpkg` 组装，无 docker，
+##               < 1 分钟，产物 noarch，任意 25.12 设备通用。
+##    build-ipk  24.10 及更早分支（opkg/.ipk）设备用。走官方 SDK 容器
+##               openwrt/gh-action-sdk 编译；luci.mk 的 PKGARCH 是 all，
+##               所以产物是 noarch ipk，任意架构的 opkg 设备通用。
+##    release    构建成功即发布到 Releases：
+##               - push 到 main → 滚动更新 `snapshot` Release（prerelease）
+##               - 打 v* tag   → 以 tag 名建正式 Release
 ##
 ##  ── 安装说明 ────────────────────────────────────────────────────────────────
-##  产物未签名，设备上安装：
-##      apk add --allow-untrusted ./luci-app-xxx-<version>.apk
+##  25.12+（apk）：  apk add --allow-untrusted ./luci-app-xxx-<ver>.apk
+##  24.10-（ipk）：  opkg install ./luci-app-xxx_<ver>_all.ipk
 ##
 ##  ── 说明 ──────────────────────────────────────────────────────────────────
-##  * 依赖只写进包元数据（depends 字段），构建过程不检查依赖是否真实存在；
-##    装到路由器上前请确认依赖包已就位（例如 airoha-ponctl 非官方包，需自备）。
-##  * 打包逻辑见 .github/scripts/build-apk.sh。
+##  * 依赖只写进包元数据，构建过程不检查依赖是否真实存在。官方 feed 里没有的
+##    包（如 airoha-ponctl、kmod-nft-fullcone）会被 SDK 静默丢掉，只在日志里
+##    留一条 WARNING —— 装到路由器上前请确认这些依赖已经就位。
+##  * apk 打包逻辑见 .github/scripts/build-apk.sh；ipk 由官方 SDK 生成。
 ## ============================================================================
 name: Build LuCI packages
 
@@ -35,6 +39,11 @@ on:
   pull_request:
     branches: [main, master]
   workflow_dispatch:
+    inputs:
+      sdk_list:
+        description: 'ipk 使用的 SDK 镜像 tag 列表（JSON 数组）'
+        required: false
+        default: '["x86_64-24.10-SNAPSHOT"]'
 
 permissions:
   contents: read
@@ -97,7 +106,7 @@ jobs:
           echo "validated $n json file(s)"
 
   # --------------------------------------------------------------------------
-  # 打包：无 SDK、无 docker。包是纯数据包（js/shell/json，无 C 代码），
+  # 打包 apk：无 SDK、无 docker。包是纯数据包（js/shell/json，无 C 代码），
   # 用 apk-tools 官方的 `apk mkpkg` 直接组装 OpenWrt 25.12 的 apk 包，
   # 与 buildroot 25.12 的打包路径一致（include/package-pack.mk apk 分支）。
   # 相比 gh-action-sdk 省掉镜像拉取 + feeds 初始化，全程 < 1 分钟。
@@ -105,6 +114,7 @@ jobs:
   # --------------------------------------------------------------------------
   build:
     name: Build apk (no-SDK)
+    needs: check
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -134,7 +144,63 @@ jobs:
           retention-days: 14
 
   # --------------------------------------------------------------------------
-  # 发布：构建成功就把 .apk 发到 Releases
+  # 打包 ipk：OpenWrt 24.10 及更早分支用的还是 opkg/.ipk。
+  # 走官方 SDK 容器（openwrt/gh-action-sdk），它把本仓库挂成 src-link feed
+  # 后 make package/*/compile，产物的 control/conffiles/postinst 都由
+  # buildroot 生成，跟官方源里的包完全一致。
+  #
+  # ARCH（=SDK 镜像 tag）命名规则：
+  #   {架构}-{版本}              正式版，如 x86_64-24.10.3
+  #   {架构}-{分支}-SNAPSHOT     分支快照，如 x86_64-24.10-SNAPSHOT
+  # 只用裸架构名（x86_64）是主干快照，编出来的是 master，别用。
+  # 这里默认用分支快照 tag，不会因为小版本号更迭而 404。
+  #
+  # luci.mk 的 PKGARCH 是 all，所以编出来的 ipk 是 noarch
+  # （luci-app-xxx_<ver>_all.ipk），一个架构就够，不用铺满矩阵。
+  # 需要其他分支时，手动运行本 workflow 填 sdk_list 即可，例如
+  #   ["x86_64-24.10-SNAPSHOT", "x86_64-23.05.5"]
+  # --------------------------------------------------------------------------
+  build-ipk:
+    name: "Build ipk (SDK ${{ matrix.sdk }})"
+    needs: check
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        sdk: ${{ fromJSON(github.event.inputs.sdk_list || '["x86_64-24.10-SNAPSHOT"]') }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Build packages with OpenWrt SDK
+        uses: openwrt/gh-action-sdk@v11
+        env:
+          ARCH: ${{ matrix.sdk }}
+          FEEDNAME: action
+          # 留空 = 编 feed 里全部包。新增 luci-app-* 不用改这里。
+          PACKAGES: ''
+          BUILD_LOG: 1
+          # 本仓库不带 quilt patch，跳过 patch 刷新检查；
+          # shfmt 检查对 init.d 脚本的格式吹毛求疵，一并跳过。
+          NO_REFRESH_CHECK: 1
+          NO_SHFMT_CHECK: 1
+
+      - name: Show packages
+        run: |
+          set -euo pipefail
+          ls -l bin/packages/*/action/*.ipk
+
+      - name: Upload ipk
+        uses: actions/upload-artifact@v7
+        with:
+          name: ipk-${{ matrix.sdk }}
+          path: |
+            bin/packages/**/*.ipk
+          if-no-files-found: error
+          retention-days: 14
+
+  # --------------------------------------------------------------------------
+  # 发布：构建成功就把 .apk / .ipk 一起发到 Releases
   #   * push 到 main   → 滚动 Release `snapshot`（prerelease，每次整建重建，
   #                      始终对应当前 main；用户直接到 Releases 页下载即可）
   #   * 打 v* tag      → 以 tag 名建正式 Release
@@ -142,15 +208,22 @@ jobs:
   release:
     name: Release
     if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main'
-    needs: build
+    needs: [build, build-ipk]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: Download all build artifacts
+      - name: Download apk artifacts
         uses: actions/download-artifact@v8
         with:
           pattern: apk-*
+          merge-multiple: true
+          path: dist
+
+      - name: Download ipk artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: ipk-*
           merge-multiple: true
           path: dist
 
@@ -164,7 +237,7 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          files=(dist/*.apk)
+          files=(dist/*.apk dist/*.ipk)
           if [ "${#files[@]}" -eq 0 ]; then
             echo "no package to publish"
             exit 1
@@ -176,8 +249,8 @@ jobs:
             extra=(--generate-notes)
           else
             tag="snapshot"
-            title="snapshot（最新构建 · OpenWrt 25.12 noarch）"
-            notes="$(printf 'main 分支自动构建，每次推送整建重建，始终为最新版本。\n\n安装：\n    apk add --allow-untrusted ./luci-app-xxx-<version>.apk')"
+            title="snapshot（最新构建 · 25.12 apk + 24.10 ipk）"
+            notes="$(printf 'main 分支自动构建，每次推送整建重建，始终为最新版本。\n\n安装：\n    apk add --allow-untrusted ./luci-app-xxx-<version>.apk\n    opkg install ./luci-app-xxx_<version>_all.ipk')"
             extra=(--prerelease --notes "$notes")
 
             # 滚动发布：删除旧 snapshot（连同 tag）后整建，避免遗留被改名/删除的旧文件
