@@ -90,15 +90,6 @@ make package/luci-app-pon-status/compile V=s
 
 连接数必须走 helper 脚本 `ponstat-conn`：`/proc/net/nf_conntrack` 是 `st_size` 为 0 的伪文件，rpcd 的 `file.read` 对这种文件只返回前 4 KiB，数不完整个表。脚本同时兼容内核 5.4 的 `[OFFLOAD]` 和 5.13+ 的 `[HW_OFFLOAD]` 两种标记写法。conntrack 不可读时卡片显示「不可用」，而不是一个假的 0。
 
-### h3c-fmcs-firmware —— HM2004-DU FPGA 比特流
-
-把 `FTTR_TOP.sbit`（2,087,000 字节，紫光同创 Logos-PGL50H 的 `FTTR_TOP` 设计）装到 `/lib/firmware/FTTR_TOP.sbit`。整个包只做这一件事，没有编译步骤、没有 init 脚本、没有任何加载代码。
-
-> **现阶段装上也不会生效。** 当前开源侧没有驱动 `request_firmware` 这个文件，设备树里 FMCS 节点仍是 `disabled` —— 它只是把比特流铺进 rootfs，FPGA 不会自己加载。
-
-依赖 `@TARGET_airoha`，非 airoha target 下 menuconfig 里看不到这个包。
-
----
 
 ## 自动构建
 
@@ -109,11 +100,8 @@ make package/luci-app-pon-status/compile V=s
    - `build-apk`：用 apk-tools 官方静态二进制的 `apk mkpkg` 组装，产物给 OpenWrt 25.12+。
    - `build-ipk`：用 tar 按 opkg 格式手工组装，`Architecture` 写 `all`，产物给 24.10 及更早。
 
-打包脚本遍历的是 `luci-app-*/Makefile`，**`h3c-fmcs-firmware` 不匹配这个通配，所以不在 Release 产物里**，需要自己编译进固件。
 
 
 ## 授权
 
 LuCI 应用与脚本：**Apache-2.0**。
-
-`h3c-fmcs-firmware` 中的 `FTTR_TOP.sbit`：**未声明**，属厂商资产。
