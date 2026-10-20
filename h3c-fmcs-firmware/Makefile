@@ -1,6 +1,4 @@
-# SPDX-License-Identifier: GPL-2.0-only
-#
-# Copyright (C) 2026 OpenWrt.org
+# SPDX-License-Identifier: Apache-2.0
 
 include $(TOPDIR)/rules.mk
 
