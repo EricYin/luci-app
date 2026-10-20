@@ -30,3 +30,4 @@ define Package/h3c-fmcs-firmware/install
 endef
 
 $(eval $(call BuildPackage,h3c-fmcs-firmware))
+# call BuildPackage: feed scanner marker; luci.mk generates the package rules.
