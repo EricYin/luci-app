@@ -200,12 +200,7 @@ function renderStatus(st) {
 
 var APPLY = '/usr/sbin/natmode-apply';
 
-/* 调起 helper。
- * rpcd 的 file.exec 要求目标文件带可执行位；固件预装时 postinst 不执行，
- * 仓库里若是 0644 就会被 cp -pR 原样打进固件，直接执行得到退出码 127。
- * 所以先走正常路径，失败再退化成 /bin/sh 解释执行兜底
- * （helper 运行起来后会自己把可执行位补回来，下次就正常了）。
- * 对应 ACL 里的 "/bin/sh /usr/sbin/natmode-apply *"。 */
+
 function callApply(args) {
 	return L.resolveDefault(fs.exec(APPLY, args), null)
 		.then(function(res) {

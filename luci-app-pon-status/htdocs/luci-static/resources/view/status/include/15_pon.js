@@ -7,56 +7,11 @@
 'require rpc';
 'require uci';
 
-/*
- * PON 光模块 + 端口速率，Status -> Overview 的一个 include 块。
- *
- * 光模块读数（收发光功率 / 温度 / 偏置电流 / 供电电压）来自
- * `/usr/sbin/ponctl status --json` 的 frontend 段，沿用本包原有的实现。
- *
- * 端口速率自己采：相邻两次采样的 {rx,tx}_bytes 差值除以实际经过的时间，
- * 单位 Mibit/s（1024*1024 bit/s）。口径与 luci-app-zn515xg-hw 的
- * 「Pon 端口速率」卡一致（上行取 tx、下行取 rx）。上行/下行两行显示在
- * 光模块 itemlist 右侧的空白区（卡片右上角、垂直居中）。
- *
- * 连接数（TCP/UDP 总数 + [HW_OFFLOAD] 硬件卸载子集）由 helper 脚本给出，
- * 显示在 itemlist 下方的分隔线下一行。
- *
- * 数据源按优先级：
- *
- *   1) ubus `network.device status` —— LuCI 接口状态页本来就在用的调用，
- *      由 luci-base 的 luci-base-network-status ACL 组授权，返回值里每个
- *      设备名下都带 statistics（含 rx_bytes/tx_bytes）。pon0 在 sysfs 里
- *      是个符号链接，rpcd 的 file.read ACL 匹配走的是解析后的真实路径，
- *      "net/*" 这种通配根本批不下来（在 ponwrt 上实测：
- *      设备上的 ACL 文件正确、rpcd 已重启、重新登录，cat 能读，
- *      LuCI 里 file.read 仍被拒），所以 sysfs 直读只能当备胎。
- *
- *   2) sysfs /sys/class/net/<device>/statistics/{rx,tx}_bytes 直读
- *      （本包 ACL 授权）。只有在 ubus 那边拿不到该设备统计时才用它。
- *
- * 第一次成功的来源会被记住（statsSource），之后的轮询不再重复探测。
- *
- * 采样点按 device 分开存。第一次渲染时没有历史采样，就隔 500 ms 再采
- * 一次，让首屏就有读数；之后每次轮询直接用上次的采样。
- *
- * 计数回绕 / 接口重启会让差值变成负数，那种情况判定为无效读数
- * （返回 null），不显示一个假的尖峰。
- */
 
-/* device -> 上一次 { rx, tx, t(ms) } */
 var prevNet = {};
 
-/* 探测后固定的取数来源：'ubus' 或 'sysfs' */
 var statsSource = null;
 
-/* 连接数 helper：数 /proc/net/nf_conntrack 里的 TCP/UDP 条目及 [HW_OFFLOAD]
- * 子集。必须走 helper —— 该文件是 st_size 为 0 的伪文件，rpcd 的 file.read
- * 只读得回前 4 KiB。
- * 注意是「经 /bin/sh 调起」而不是直接 exec：rpcd 的 file.exec 要求目标有
- * 可执行位，而这个位在「Windows zip 打包 -> 各种解压/拷贝」的链路上反复
- * 丢失（0.4.1 的 Build/Prepare chmod 和 postinst chmod 在部分 SDK/固件上
- * 都不生效）。sh 读脚本内容不要求脚本本身可执行，ACL 用带参数的精确
- * 匹配 "/bin/sh /usr/sbin/ponstat-conn" 只放行这一条命令。 */
 var CONNSTAT = '/usr/sbin/ponstat-conn';
 
 var callDeviceStatus = rpc.declare({
@@ -84,7 +39,6 @@ function readFrontend(device) {
 	});
 }
 
-/* 备用：sysfs 直读一次采样。接口不存在 / ACL 被拒时返回 null */
 function sampleSysfs(device) {
 	var base = '/sys/class/net/' + device + '/statistics';
 
@@ -101,7 +55,6 @@ function sampleSysfs(device) {
 	});
 }
 
-/* 主：ubus network.device status。调用失败或没有该设备的统计 -> null */
 function sampleUbus(device) {
 	return L.resolveDefault(callDeviceStatus(), null).then(function(res) {
 		var dev = (L.isObject(res) && L.isObject(res[device]))
@@ -118,7 +71,6 @@ function sampleUbus(device) {
 	});
 }
 
-/* 一次采样：先 ubus，拿不到该设备统计时退回 sysfs；都不行 -> null */
 function sampleNet(device) {
 	if (statsSource == 'sysfs')
 		return sampleSysfs(device);
@@ -138,7 +90,6 @@ function sampleNet(device) {
 	});
 }
 
-/* 计数回绕 / 接口重启会算出巨大的假速率，那种情况返回 null */
 function netRate(from, to) {
 	var dt = (to.t - from.t) / 1000.0;
 
@@ -151,7 +102,6 @@ function netRate(from, to) {
 	};
 }
 
-/* 连接数：一次 helper exec 拿 TCP/UDP 总数与硬件卸载子集，不可用 -> null */
 function readConns() {
 	return L.resolveDefault(fs.exec('/bin/sh', [ CONNSTAT ]), null).then(function(res) {
 		var vals = {},
@@ -180,12 +130,10 @@ function readConns() {
 	});
 }
 
-/* { rx, tx }，单位 Mibit/s；计数读不到 -> { error: true }（多半是 ACL 没生效
- * 或接口不存在），采样有效但差分无效（回绕/重启）-> null */
 function readRate(device) {
 	return sampleNet(device).then(function(cur) {
 		if (cur == null) {
-			/* 读不到计数 —— 以后也采不到，别留着旧采样 */
+
 			delete prevNet[device];
 			return { error: true };
 		}
@@ -201,7 +149,6 @@ function readRate(device) {
 				return r;
 		}
 
-		/* 首次渲染（或上一次采样已失效）：补一次短间隔采样 */
 		return new Promise(function(resolve) {
 			window.setTimeout(function() {
 				sampleNet(device).then(function(cur2) {
@@ -227,7 +174,6 @@ function metric(frontend, field, unit, digits) {
 	return Number(frontend[field]).toFixed(digits) + ' ' + unit;
 }
 
-/* 主题变量 + 字面兜底（兜底值取 luCI 亮色主题的实际定义） */
 function css(name, fallback) {
 	return 'var(--' + name + ', ' + fallback + ')';
 }
@@ -238,10 +184,6 @@ var cStrong = css('text-color-highest', '#000000');
 var cCool   = css('success-color-high', 'rgb(0, 172, 89)');
 
 var S_RATE_BLOCK = 'margin-top: 8px; padding-top: 8px; border-top: 1px solid ' + cBorder;
-/* 上部一行两列：左边光模块 itemlist（标签窄、右侧留白），右边就是
- * 上行/下行两行速率 —— 正好填进 itemlist 的空白区。
- * align-items: center 让速率列相对左侧 itemlist 垂直居中（而不是顶在上面）。
- * 所有文字 nowrap，禁止窄屏逐字竖排断行。 */
 var S_TOP        = 'display: flex; align-items: center; justify-content: space-between; gap: 10px; min-width: 0';
 var S_RATE_COL   = 'flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; align-items: flex-end';
 var S_RATE_ROW   = 'display: flex; align-items: baseline; gap: 5px; white-space: nowrap';
@@ -249,8 +191,6 @@ var S_RATE_LABEL = 'font-size: 12px; color: ' + cMuted + '; white-space: nowrap'
 var S_RATE_VALUE = 'font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; color: ' + cStrong + '; white-space: nowrap';
 var S_RATE_UNIT  = 'font-size: 10px; color: ' + cMuted + '; margin-left: 2px; white-space: nowrap';
 var S_EMPTY      = 'font-size: 13px; color: ' + cMuted + '; white-space: nowrap';
-/* 连接数行：协议标签 + 总数 + 硬件卸载计数（绿色，好消息的颜色）。
- * TCP/UDP 两组并排一行，宽度不够时允许换行。 */
 var S_CONN_ROW   = 'display: flex; align-items: baseline; gap: 3px; white-space: nowrap';
 var S_CONN_LABEL = 'font-size: 11px; font-weight: 600; color: ' + cMuted + '; white-space: nowrap';
 var S_CONN_VALUE = 'font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; color: ' + cStrong + '; white-space: nowrap';
@@ -266,7 +206,6 @@ function rateLine(label, value) {
 }
 
 function connCell(label, c) {
-	/* 不给 E() 传 null 子节点（旧版 LuCI 不跳过 null），这里全部非空 */
 	return E('div', { 'style': S_CONN_ROW }, [
 		E('span', { 'style': S_CONN_LABEL }, [ label ]),
 		E('span', { 'style': S_CONN_VALUE }, [ String(c.total) ]),
@@ -275,7 +214,6 @@ function connCell(label, c) {
 	]);
 }
 
-/* 右侧速率列：上行/下行两行，整列在卡片里垂直居中；读不到就给个简短占位 */
 function buildRateCol(rate) {
 	if (rate && !rate.error)
 		return E('div', { 'style': S_RATE_COL }, [
@@ -287,7 +225,6 @@ function buildRateCol(rate) {
 		[ rate ? _('读取失败') : _('不可用') ]);
 }
 
-/* 底部分隔线下的一行：TCP / UDP 两组并排，宽度不够时换行 */
 function buildConnRow(conns) {
 	var cells = [];
 
@@ -340,7 +277,6 @@ return baseclass.extend({
 			if (!sections.length)
 				return Promise.reject();
 
-			/* 连接数是整机数据，与具体光口无关，一次 exec 所有卡片共用 */
 			return Promise.all([
 				readConns(),
 				Promise.all(sections.map(function(section) {

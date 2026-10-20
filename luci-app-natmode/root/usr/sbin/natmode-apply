@@ -6,24 +6,15 @@ CONF_MODE="natmode.main.mode"
 CONF_OFFLOAD="natmode.main.auto_offload"
 CONF_FULLCONE6="natmode.main.fullcone6"
 
-# 上次观测到的规则在位情况。/var/run 是 tmpfs，开机即空 —— 这正是区分
-# 「开机首次注入」和「运行中丢失后修复」的依据：开机后第一次把规则建起来
-# 属于正常启动流程，不该在页面上弹「已自动修复」。
-# （STATE 可被环境变量覆盖，仅供测试钩子使用，设备上不受影响。）
 STATE="${NATMODE_STATE:-/var/run/natmode.state}"
 
 log() {
 	logger -t natmode "$@"
 }
 
-# 自身可执行位丢失时顺手补回来。
-# 固件预装场景下 postinst 不执行，Makefile 的 Build/Prepare 补过一次；
-# 这里再兜一层，处理「手工拷贝进设备 / 权限被重置」的情况。失败（如 /usr
-# 只读）就静默跳过 —— 调用方已经退化成 /bin/sh 解释执行，功能不受影响。
 SELF=/usr/sbin/natmode-apply
 [ -x "$SELF" ] || chmod 0755 "$SELF" 2>/dev/null
 
-# 读状态：规则此前在位返回 0，否则返回 1
 state_had_rules() {
 	[ -f "$STATE" ] || return 1
 	grep -q '^rules=1$' "$STATE" 2>/dev/null
@@ -34,8 +25,6 @@ state_set_rules() {  # state_set_rules <0|1>
 	printf 'rules=%s\n' "$1" > "$STATE" 2>/dev/null
 }
 
-# apk 运行时安装不会建 rc.d 软链，开机可能从没跑过本服务 → 幂等补 enable，
-# 用户开一次页面（status）或点一次应用（apply）即可修复
 ensure_enabled() {
 	[ -x /etc/init.d/natmode ] || return 0
 	if ! /etc/init.d/natmode enabled >/dev/null 2>&1; then
@@ -69,7 +58,6 @@ set_fullcone_exact() {
 
 	if [ "$val" = "1" ]; then
 		uci set firewall.@defaults[0].fullcone='1' 2>/dev/null || return 1
-		# IPv6 的 fullcone6 由独立选项控制（默认关闭）
 		if [ "$(get_flag "$CONF_FULLCONE6" 0)" = "1" ]; then
 			uci set firewall.@defaults[0].fullcone6='1' 2>/dev/null
 			log "firewall fullcone=1（IPv6 fullcone6 一并开启）"
@@ -78,7 +66,6 @@ set_fullcone_exact() {
 			log "firewall fullcone=1（IPv6 fullcone6 未开启，默认关闭）"
 		fi
 	else
-		# 与防火墙页取消勾选一致：删键，而不是写 0
 		uci -q del firewall.@defaults[0].fullcone
 		uci -q del firewall.@defaults[0].fullcone6
 		log "firewall fullcone 已删除（与防火墙页取消勾选一致，含 fullcone6）"
@@ -87,12 +74,11 @@ set_fullcone_exact() {
 	return 0
 }
 
-# 读取 fullcone6 选项当前值（0/1）
 get_fullcone6() {
 	get_flag "$CONF_FULLCONE6" 0
 }
 
-offload_state() {  # 输出 off / sw / hw
+offload_state() {  
 	if [ "$(uci -q get firewall.@defaults[0].flow_offloading 2>/dev/null)" = "1" ]; then
 		if [ "$(uci -q get firewall.@defaults[0].flow_offloading_hw 2>/dev/null)" = "1" ]; then
 			echo hw
@@ -116,7 +102,6 @@ offload_disable() {
 nft_srcnat_chains() {
 	local out
 	out="$(nft list chains inet fw4 2>/dev/null)"
-	# 某些 nft 版本的 `list chains` 输出为空，回退到整表 dump
 	[ -z "$out" ] && out="$(nft list table inet fw4 2>/dev/null)"
 	printf '%s\n' "$out" | \
 		sed -n 's/^[[:space:]]*chain \(srcnat_[A-Za-z0-9_]*\).*/\1/p' | sort -u
@@ -219,7 +204,7 @@ do_apply() {
 			uci set "$CONF_MODE"="$want" 2>/dev/null
 			;;
 		'')
-			: # 开机路径：不传参，用 UCI 现值
+			: 
 			;;
 		*)
 			log "警告：忽略未知模式参数 '$want'，使用 UCI 现值"
@@ -247,7 +232,6 @@ do_apply() {
 			;;
 		symmetric)
 			set_fullcone_exact 0
-			# 卸载与 NAT4 互斥：开着卸载，随机端口规则根本不参与转发
 			[ "$(get_flag "$CONF_OFFLOAD" 0)" = "1" ] && offload_disable
 			;;
 	esac
@@ -273,9 +257,6 @@ do_reapply() {
 	fc="$(uci -q get firewall.@defaults[0].fullcone 2>/dev/null)"
 
 	if [ "$mode" = "symmetric" ] && [ "${fc:-0}" != "1" ]; then
-		# 本命令通常在 fw4 重载前后被并发调用（接口事件触发器、reload
-		# trigger）：插入后校验，没插上就稍等重试，把和 fw4 重载的竞态
-		# 收敛掉。nft_random_add 对已含 fully-random 的链会跳过，幂等。
 		while [ "$i" -lt 5 ]; do
 			nft_random_add >/dev/null
 			rand="$(nft_random_count)"
@@ -306,7 +287,6 @@ do_status() {
 	chains="${chains:-0}"
 	rand="$(nft_random_count)"
 
-	# 本次观测之前，规则是否曾在位？（开机后状态文件为空 -> 没在位过）
 	state_had_rules && pre_had=1
 
 	if [ "$mode" = "symmetric" ] && [ "$fc" != "1" ] && [ "${rand:-0}" = "0" ] \
@@ -316,11 +296,9 @@ do_status() {
 
 		if [ "${rand:-0}" != "0" ]; then
 			if [ "$pre_had" = "1" ]; then
-				# 运行中规则被清掉又重建 —— 这才是真正的「修复」
 				healed=1
 				log "自愈：NAT4 随机端口规则已重新注入（此前被防火墙重载清除）"
 			else
-				# 开机后首次建立：正常启动流程，不算故障，不上报
 				log "开机注入：NAT4 随机端口规则已建立（正常启动流程）"
 			fi
 		fi
@@ -354,7 +332,6 @@ do_status() {
 		log "自愈：清理残留随机端口规则（当前为 $effective，不应存在）"
 	fi
 
-	# 记录本次观测，供下次区分「开机注入」与「运行中修复」
 	[ "${rand:-0}" != "0" ] && state_set_rules 1 || state_set_rules 0
 
 	fw_mode="restricted"

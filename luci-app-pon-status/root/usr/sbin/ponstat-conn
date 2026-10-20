@@ -1,30 +1,7 @@
 #!/bin/sh
 # SPDX-License-Identifier: Apache-2.0
 #
-# ponstat-conn —— luci-app-pon-status 概览页「连接数」数据源
-#
-# 被 LuCI 通过 rpcd 的 file.exec 调用，往 stdout 输出 key=value 行：
-#
-#   tcp_total=<nf_conntrack 里 tcp 条目数>    tcp_npu=<其中 [HW_OFFLOAD]/[OFFLOAD] 条目数>
-#   udp_total=<nf_conntrack 里 udp 条目数>    udp_npu=<其中 [HW_OFFLOAD]/[OFFLOAD] 条目数>
-#
-# "total" 不分 IPv4/IPv6 一起数，"npu" 只数被卸载接管的子集，其余协议
-# （icmp、gre、……）不数。
-#
-# 卸载标记的写法随内核版本不同（都在 nf_conntrack 条目的末尾）：
-#   kernel 5.4 及部分 BSP  → [OFFLOAD]      （flowtable 快路径接管）
-#   kernel 5.13+ 上游      → [HW_OFFLOAD]   （硬件卸载接管）
-# 兼容两者，名字里的 npu 只是历史叫法 —— 实际含义是「被 flowtable
-# （含 Airoha PPE 硬件卸载）接管、不再走 CPU 慢路径的连接」。
-#
-# 为什么需要 helper：/proc/net/nf_conntrack 是 st_size 为 0 的伪文件，
-# rpcd 的 file.read 对这种文件只返回前 4 KiB，数不完整个表 —— 与
-# luci-app-zn515xg-hw 的 515xg-connstat 同理。exec 权限由本包
-# /usr/share/rpcd/acl.d/luci-app-pon-status.json 按**精确路径**授予
-# （精确路径不涉及通配匹配，不会有 /sys/class/net 那种符号链接问题）。
-#
-# conntrack 不可读（模块没加载等）时什么都不输出，页面显示「不可用」，
-# 而不是显示一个假的 0。
+
 
 CT=/proc/net/nf_conntrack
 

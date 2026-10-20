@@ -1,9 +1,8 @@
 #!/bin/sh
 #
-# ipk 安装后脚本（由 .github/scripts/build-ipk.sh 打包进 control.tar.gz）
+
 [ -n "${IPKG_INSTROOT}" ] || {
 	chmod 0755 /usr/sbin/ponstat-conn 2>/dev/null
-	# 概览页卡片：固件把 include 列表写死时才需要注入
 	/usr/share/luci-app-pon-status/attach-card attach
 	rm -f /tmp/luci-indexcache.*
 	rm -rf /tmp/luci-modulecache/

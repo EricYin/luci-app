@@ -1,39 +1,16 @@
 #!/bin/sh
-#
-# 把本包的概览页卡片（view.status.include.15_pon）挂进「状态 → 概览」。
-#
-# 背景：上游 LuCI 的 view/status/index.js 是运行时扫目录的
-#     fs.list('/www/luci-static/resources/view/status/include')
-# 所以正常情况下把 15_pon.js 丢进那个目录就会自动出现，什么都不用做。
-#
-# 但部分固件分支（例如 QWRT R26.x = OpenWrt 25.12 + 定制的 luci-mod-status）
-# 把这份列表写死成了 8 个模块名：
-#     var includeModules=[{name:'view.status.include.10_system'},
-#                         {name:'view.status.include.15_ports',title:...}, ...]
-# 这种 index.js 永远不会 require 我们的文件，卡片就不可能显示。
-#
-# 对策：幂等地往这个数组里插一个完整的元素
-#     {name:'view.status.include.15_pon'},
-# 插在 15_ports 之前（NN 前缀决定概览页里的排序）。
-#
-# 注意踩过的坑：只把 'view.status.include.15_pon', 塞进 15_ports 那个
-# 对象里会写成 {name:'view.status.include.15_pon','view.status.include.15_ports',...}
-# —— 对象字面量里出现裸字符串，整个 index.js 语法错误，概览页直接白屏。
-# 所以插入必须是「整个元素」，并且插完要做三重校验（精确串 + 括号计数），
-# 任何一项不过就从备份还原。
-#
-# 用法：attach-card attach|detach
+
 set -u
 
 F='/www/luci-static/resources/view/status/index.js'
 BAK="$F.bak-pon-status"
 MARK='include\.15_pon'
 ANCHOR='include\.15_ports'
-# 插完必须出现的精确字符串（grep -F，不做正则）
+
 VERIFY="'view.status.include.15_pon'},{name:'view.status.include.15_ports'"
 
 count_braces() {
-	# 输出 "{ 个数 } 个数"
+
 	printf '%s %s\n' "$(tr -cd '{' <"$1" | wc -c)" "$(tr -cd '}' <"$1" | wc -c)"
 }
 
