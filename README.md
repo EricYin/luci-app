@@ -8,9 +8,7 @@
 |---|---|---|---|---|
 | `luci-app-natmode` | 0.1.6-r1 | NAT 类型三选一：全锥形 / 受限 / 对称 | 网络 → NAT 类型 | `firewall4`、`kmod-nft-fullcone` |
 | `luci-app-pon-status` | 0.4.6-r4 | PON 光模块 + 端口速率 + 连接数概览卡片 | 状态 → 概览 | `airoha-ponctl`、`jsonfilter`、`rpcd-mod-file`、`luci-mod-status` |
-| `h3c-fmcs-firmware` | 1.0-r1 | H3C HM2004-DU Micro-OLT FPGA 比特流 | 无界面 | 仅 `@TARGET_airoha` |
 
-三者共同的前提是设备上有 **LuCI + rpcd**。
 
 ---
 
