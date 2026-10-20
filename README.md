@@ -111,23 +111,6 @@ make package/luci-app-pon-status/compile V=s
 
 打包脚本遍历的是 `luci-app-*/Makefile`，**`h3c-fmcs-firmware` 不匹配这个通配，所以不在 Release 产物里**，需要自己编译进固件。
 
----
-
-## 几个容易踩的坑
-
-**可执行位。** LuCI 通过 rpcd 调起 `/usr/sbin/natmode-apply`、`/usr/sbin/ponstat-conn`，而 rpcd 的 `file.exec` 拒绝执行没有可执行位的文件。网页上传 / zip 打包这条链路上 x 位反复丢失，症状是页面报「退出码 127」或某项显示「不可用」。两个包都在 `Build/Prepare` 里补了 `chmod`，`pon-status` 还改成经 `/bin/sh` 调起兜底，装完 postinst 再补一次。如果你手工往设备里拷文件，记得：
-
-```sh
-chmod 0755 /usr/sbin/natmode-apply /usr/sbin/ponstat-conn
-```
-
-**NAT4 默认名不副实。** `auto_offload` 默认是 0，也就是保留路由/NAT 卸载。而卸载（尤其走 PPE 的硬件卸载）会把流量绕过 conntrack 直接转发，nft 的 `fully-random` 根本不参与——NAT4 只是配置上了，实测仍是 NAT3。想要真正的 NAT4 就把它置 1，代价是硬件转发失效、吞吐下降。
-
-**概览卡片在部分固件上不出来。** 正常 LuCI 的 `view/status/index.js` 是运行时扫目录，把 `15_pon.js` 丢进去就会自动出现。但有些分支（例如 QWRT R26.x）把这份 include 列表写死成了固定几个模块名，扫不到新文件。这种情况由 `attach-card` 在装包时注入、卸包时回滚，注入后会做精确串 + 括号计数三重校验，任一项不过就从备份还原，不会把概览页搞白屏。
-
-**FTTR 比特流的合规问题。** 包里装的 `FTTR_TOP.sbit` 是从 H3C 设备提取的厂商 FPGA 二进制，仓库**没有声明**它的分发许可——Makefile 头部的 SPDX 声明只覆盖构建脚本本身。自用没问题，但别默认它可以随公开固件再分发。
-
----
 
 ## 授权
 
